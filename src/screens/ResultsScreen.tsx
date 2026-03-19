@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile } from "../types";
 
 interface Props {
@@ -28,6 +28,24 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const pickFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
     if (selected) setReviewDest(selected);
+  };
+
+  const handleExport = async (format: "csv" | "json") => {
+    const ext = format === "csv" ? "csv" : "json";
+    const filePath = await save({
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      defaultPath: `scan-report.${ext}`,
+    });
+    if (!filePath) return;
+    try {
+      await invoke("export_report", {
+        results: result,
+        format,
+        destPath: filePath,
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const canAct = isReview
@@ -147,6 +165,11 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                 <span className="stat-label">skipped</span>
               </div>
             )}
+          </div>
+
+          <div className="export-buttons">
+            <button className="btn-small" onClick={() => handleExport("csv")}>Export CSV</button>
+            <button className="btn-small" onClick={() => handleExport("json")}>Export JSON</button>
           </div>
 
           {actionError && (

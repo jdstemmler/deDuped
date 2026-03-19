@@ -617,6 +617,17 @@ body {
   accent-color: var(--btn-primary);
 }
 
+/* ── Export Buttons ──────────────────────────────────── */
+.export-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.export-buttons .btn-small {
+  flex: 1;
+  text-align: center;
+}
+
 /* ── Action Panel ────────────────────────────────────── */
 .action-panel {
   border: 0.5px solid var(--border);

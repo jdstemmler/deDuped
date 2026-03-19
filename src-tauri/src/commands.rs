@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -28,7 +30,7 @@ pub enum DupeMode {
     ReviewFirst,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub total_eval: usize,
     pub duplicates: Vec<EvalFile>,
@@ -36,7 +38,7 @@ pub struct ScanResult {
     pub skipped: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalFile {
     pub path: String,
     pub relative_path: String,
@@ -257,4 +259,64 @@ pub async fn execute_action(
         errors,
         dirs_cleaned,
     })
+}
+
+fn csv_quote(field: &str) -> String {
+    if field.contains(',') || field.contains('"') || field.contains('\n') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
+#[tauri::command]
+pub async fn export_report(
+    results: ScanResult,
+    format: String,
+    dest_path: String,
+) -> Result<(), String> {
+    let path = PathBuf::from(&dest_path);
+
+    match format.as_str() {
+        "csv" => {
+            let mut file = fs::File::create(&path)
+                .map_err(|e| format!("Failed to create file: {e}"))?;
+
+            writeln!(file, "status,relative_path,size_bytes,hash")
+                .map_err(|e| format!("Failed to write header: {e}"))?;
+
+            for f in &results.duplicates {
+                writeln!(
+                    file,
+                    "{},{},{},{}",
+                    "duplicate",
+                    csv_quote(&f.relative_path),
+                    f.size,
+                    f.hash,
+                )
+                .map_err(|e| format!("Failed to write row: {e}"))?;
+            }
+            for f in &results.uniques {
+                writeln!(
+                    file,
+                    "{},{},{},{}",
+                    "unique",
+                    csv_quote(&f.relative_path),
+                    f.size,
+                    f.hash,
+                )
+                .map_err(|e| format!("Failed to write row: {e}"))?;
+            }
+
+            Ok(())
+        }
+        "json" => {
+            let json = serde_json::to_string_pretty(&results)
+                .map_err(|e| format!("Failed to serialize JSON: {e}"))?;
+            fs::write(&path, json)
+                .map_err(|e| format!("Failed to write file: {e}"))?;
+            Ok(())
+        }
+        _ => Err(format!("Unsupported format: {format}. Use \"csv\" or \"json\".")),
+    }
 }
