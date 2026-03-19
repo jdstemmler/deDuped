@@ -6,6 +6,7 @@ export interface ScanConfig {
   unique_dest: string | null;
   categories: string[];
   all_files: boolean;
+  hash_algorithm: string;
 }
 
 export type DupeMode =

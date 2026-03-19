@@ -22,6 +22,7 @@ pub struct ScanConfig {
     pub unique_dest: Option<String>,
     pub categories: Vec<String>,
     pub all_files: bool,
+    pub hash_algorithm: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +149,7 @@ fn scan_folders_blocking(
         ref_total,
     );
 
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress);
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm);
     let _ = reporter.join();
 
     // Build hash set from reference
@@ -168,7 +169,7 @@ fn scan_folders_blocking(
         eval_total,
     );
 
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress);
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm);
     let _ = reporter.join();
 
     // Sort eval results by path for deterministic intra-eval duplicate detection

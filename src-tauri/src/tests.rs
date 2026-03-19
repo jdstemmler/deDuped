@@ -16,7 +16,7 @@ fn hash_file_known_content() {
     let file = dir.path().join("hello.txt");
     fs::write(&file, b"hello world").unwrap();
 
-    let hash = hasher::hash_file(&file).unwrap();
+    let hash = hasher::hash_file(&file, "sha256").unwrap();
     // SHA-256 of "hello world"
     assert_eq!(
         hash,
@@ -30,7 +30,7 @@ fn hash_file_empty() {
     let file = dir.path().join("empty.txt");
     fs::write(&file, b"").unwrap();
 
-    let hash = hasher::hash_file(&file).unwrap();
+    let hash = hasher::hash_file(&file, "sha256").unwrap();
     // SHA-256 of empty input
     assert_eq!(
         hash,
@@ -40,8 +40,37 @@ fn hash_file_empty() {
 
 #[test]
 fn hash_file_nonexistent() {
-    let result = hasher::hash_file(&PathBuf::from("/does/not/exist.jpg"));
+    let result = hasher::hash_file(&PathBuf::from("/does/not/exist.jpg"), "sha256");
     assert!(result.is_err());
+}
+
+#[test]
+fn hash_file_xxh3_known_content() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("hello.txt");
+    fs::write(&file, b"hello world").unwrap();
+
+    let hash = hasher::hash_file(&file, "xxh3").unwrap();
+    // xxh3_64 produces a 16-char hex string
+    assert_eq!(hash.len(), 16);
+
+    // Verify determinism: hashing the same content again should produce the same hash
+    let hash2 = hasher::hash_file(&file, "xxh3").unwrap();
+    assert_eq!(hash, hash2);
+
+    // Verify it's different from SHA-256
+    let sha_hash = hasher::hash_file(&file, "sha256").unwrap();
+    assert_ne!(hash, sha_hash);
+}
+
+#[test]
+fn hash_file_xxh3_empty() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("empty.txt");
+    fs::write(&file, b"").unwrap();
+
+    let hash = hasher::hash_file(&file, "xxh3").unwrap();
+    assert_eq!(hash.len(), 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -313,11 +342,12 @@ fn cache_set_and_get() {
         size: 1024,
         mtime_secs: 1700000000,
         mtime_nanos: 500,
+        algorithm: "sha256".to_string(),
     };
 
     cache.set(&entry).unwrap();
 
-    let result = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500);
+    let result = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "sha256");
     assert_eq!(result, Some("abc123".to_string()));
 }
 
@@ -331,16 +361,19 @@ fn cache_get_returns_none_on_mismatch() {
         size: 1024,
         mtime_secs: 1700000000,
         mtime_nanos: 500,
+        algorithm: "sha256".to_string(),
     };
 
     cache.set(&entry).unwrap();
 
     // Different size
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500), None);
+    assert_eq!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500, "sha256"), None);
     // Different mtime
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500), None);
+    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500, "sha256"), None);
     // Different path
-    assert_eq!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500), None);
+    assert_eq!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500, "sha256"), None);
+    // Different algorithm
+    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "xxh3"), None);
 }
 
 #[test]
@@ -353,6 +386,7 @@ fn cache_set_overwrites() {
         size: 1024,
         mtime_secs: 1700000000,
         mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
     };
     cache.set(&entry1).unwrap();
 
@@ -362,15 +396,51 @@ fn cache_set_overwrites() {
         size: 2048,
         mtime_secs: 1700000001,
         mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
     };
     cache.set(&entry2).unwrap();
 
     // Old metadata should no longer match
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0), None);
+    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"), None);
     // New metadata should match
     assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0),
+        cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0, "sha256"),
         Some("new_hash".to_string())
+    );
+}
+
+#[test]
+fn cache_stores_different_algorithms_separately() {
+    let cache = HashCache::open_in_memory().unwrap();
+
+    let sha_entry = CachedFile {
+        path: "/tmp/test/photo.jpg".to_string(),
+        hash: "sha_hash".to_string(),
+        size: 1024,
+        mtime_secs: 1700000000,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+    };
+    cache.set(&sha_entry).unwrap();
+
+    let xxh_entry = CachedFile {
+        path: "/tmp/test/photo.jpg".to_string(),
+        hash: "xxh_hash".to_string(),
+        size: 1024,
+        mtime_secs: 1700000000,
+        mtime_nanos: 0,
+        algorithm: "xxh3".to_string(),
+    };
+    cache.set(&xxh_entry).unwrap();
+
+    // Each algorithm returns its own hash
+    assert_eq!(
+        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"),
+        Some("sha_hash".to_string())
+    );
+    assert_eq!(
+        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "xxh3"),
+        Some("xxh_hash".to_string())
     );
 }
 
@@ -385,6 +455,7 @@ fn cache_prune_removes_nonexistent() {
         size: 100,
         mtime_secs: 1700000000,
         mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
     };
     cache.set(&entry).unwrap();
 
@@ -393,7 +464,7 @@ fn cache_prune_removes_nonexistent() {
 
     // Entry should be gone
     assert_eq!(
-        cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0),
+        cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0, "sha256"),
         None
     );
 }
@@ -413,6 +484,7 @@ fn cache_prune_keeps_existing() {
         size: 4,
         mtime_secs: 1700000000,
         mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
     };
     cache.set(&entry).unwrap();
 
@@ -421,7 +493,7 @@ fn cache_prune_keeps_existing() {
 
     // Entry should still be there
     assert_eq!(
-        cache.get(&path_str, 4, 1700000000, 0),
+        cache.get(&path_str, 4, 1700000000, 0, "sha256"),
         Some("exists".to_string())
     );
 }

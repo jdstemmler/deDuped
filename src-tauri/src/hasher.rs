@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use walkdir::WalkDir;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache::{CachedFile, HashCache};
 
@@ -77,7 +78,7 @@ pub fn collect_files(dir: &Path, allowed_extensions: Option<&HashSet<String>>) -
         .collect()
 }
 
-pub fn hash_file(path: &Path) -> Result<String, String> {
+fn hash_file_sha256(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -91,6 +92,29 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
         hasher.update(&buffer[..n]);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+fn hash_file_xxh3(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    let mut hasher = Xxh3::new();
+    let mut buffer = [0u8; 131_072]; // 128 KB
+    loop {
+        let n = file.read(&mut buffer)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(format!("{:016x}", hasher.digest()))
+}
+
+pub fn hash_file(path: &Path, algorithm: &str) -> Result<String, String> {
+    match algorithm {
+        "xxh3" => hash_file_xxh3(path),
+        _ => hash_file_sha256(path),
+    }
 }
 
 fn file_meta(path: &Path) -> Result<(u64, i64, u32), String> {
@@ -137,6 +161,7 @@ pub fn hash_files_cached(
     files: &[PathBuf],
     cache: &HashCache,
     progress: Arc<AtomicUsize>,
+    algorithm: &str,
 ) -> HashResult {
     let mut results: Vec<HashedFile> = Vec::with_capacity(files.len());
     let mut needs_hashing: Vec<FileMeta> = Vec::new();
@@ -154,7 +179,7 @@ pub fn hash_files_cached(
         };
         let (size, mtime_secs, mtime_nanos) = meta;
 
-        if let Some(hash) = cache.get(&path_str, size, mtime_secs, mtime_nanos) {
+        if let Some(hash) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
             results.push(HashedFile { path: path_str, hash, size });
         } else {
@@ -169,11 +194,12 @@ pub fn hash_files_cached(
     }
 
     // Hash cache misses in parallel
+    let algo = algorithm.to_string();
     let progress_clone = progress.clone();
     let newly_hashed: Vec<Result<(FileMeta, String), SkippedFile>> = needs_hashing
         .into_par_iter()
         .map(|fm| {
-            match hash_file(&fm.path) {
+            match hash_file(&fm.path, &algo) {
                 Ok(hash) => {
                     progress_clone.fetch_add(1, Ordering::Relaxed);
                     Ok((fm, hash))
@@ -197,6 +223,7 @@ pub fn hash_files_cached(
                     size: fm.size,
                     mtime_secs: fm.mtime_secs,
                     mtime_nanos: fm.mtime_nanos,
+                    algorithm: algorithm.to_string(),
                 });
                 results.push(HashedFile {
                     path: fm.path_str,

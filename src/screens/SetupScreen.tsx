@@ -14,6 +14,7 @@ interface SavedConfig {
   uniqueDest: string;
   selectedCategories: string[];
   allFiles: boolean;
+  hashAlgorithm?: string;
 }
 
 function loadSavedConfig(): SavedConfig | null {
@@ -79,6 +80,10 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     initialConfig?.all_files ?? saved?.allFiles ?? false
   );
 
+  const [hashAlgorithm, setHashAlgorithm] = useState<string>(
+    initialConfig?.hash_algorithm ?? saved?.hashAlgorithm ?? "sha256"
+  );
+
   // Drag-and-drop state: which picker is being hovered
   const [dragOver, setDragOver] = useState<"reference" | "eval" | null>(null);
 
@@ -125,6 +130,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       uniqueDest,
       selectedCategories: Array.from(selectedCategories),
       allFiles,
+      hashAlgorithm,
     });
 
     let mode: DupeMode;
@@ -140,6 +146,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       unique_dest: moveUniques ? uniqueDest : null,
       categories: Array.from(selectedCategories),
       all_files: allFiles,
+      hash_algorithm: hashAlgorithm,
     });
   };
 
@@ -208,6 +215,29 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
           >
             All Files
           </button>
+        </div>
+
+        <div className="hash-algorithm-row">
+          <span className="hash-label">Hash algorithm</span>
+          <div className="hash-pills">
+            <button
+              className={`hash-pill ${hashAlgorithm === "sha256" ? "active" : ""}`}
+              onClick={() => setHashAlgorithm("sha256")}
+            >
+              SHA-256
+            </button>
+            <button
+              className={`hash-pill ${hashAlgorithm === "xxh3" ? "active" : ""}`}
+              onClick={() => setHashAlgorithm("xxh3")}
+            >
+              xxHash
+            </button>
+          </div>
+          <span className="hash-hint">
+            {hashAlgorithm === "sha256"
+              ? "Cryptographic, slower"
+              : "Fast, non-cryptographic"}
+          </span>
         </div>
       </div>
 
