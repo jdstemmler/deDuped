@@ -1,27 +1,93 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import type { ScanConfig, DupeMode } from "../types";
+
+const LOCAL_STORAGE_KEY = "deduped-last-config";
+
+interface SavedConfig {
+  reference_dir: string;
+  eval_dir: string;
+  dupe_mode: "trash" | "move" | "review";
+  dupeDest: string;
+  moveUniques: boolean;
+  uniqueDest: string;
+}
+
+function loadSavedConfig(): SavedConfig | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedConfig;
+  } catch {
+    return null;
+  }
+}
+
+function saveSavedConfig(config: SavedConfig): void {
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(config));
+}
+
+function initialDupeMode(initialConfig: ScanConfig | null, saved: SavedConfig | null): "trash" | "move" | "review" {
+  if (initialConfig) {
+    if (initialConfig.dupe_mode.type === "MoveToFolder") return "move";
+    if (initialConfig.dupe_mode.type === "ReviewFirst") return "review";
+    return "trash";
+  }
+  return saved?.dupe_mode ?? "trash";
+}
+
+function initialDupeDest(initialConfig: ScanConfig | null, saved: SavedConfig | null): string {
+  if (initialConfig?.dupe_mode.type === "MoveToFolder") return initialConfig.dupe_mode.dest;
+  return saved?.dupeDest ?? "";
+}
 
 interface Props {
   onStart: (config: ScanConfig) => void;
   initialConfig: ScanConfig | null;
 }
 
+interface DragDropPayload {
+  paths: string[];
+  position: { x: number; y: number };
+}
+
 export default function SetupScreen({ onStart, initialConfig }: Props) {
-  const [referenceDir, setReferenceDir] = useState(initialConfig?.reference_dir ?? "");
-  const [evalDir, setEvalDir] = useState(initialConfig?.eval_dir ?? "");
+  const saved = useRef(loadSavedConfig()).current;
+
+  const [referenceDir, setReferenceDir] = useState(initialConfig?.reference_dir ?? saved?.reference_dir ?? "");
+  const [evalDir, setEvalDir] = useState(initialConfig?.eval_dir ?? saved?.eval_dir ?? "");
   const [dupeMode, setDupeMode] = useState<"trash" | "move" | "review">(
-    initialConfig?.dupe_mode.type === "MoveToFolder"
-      ? "move"
-      : initialConfig?.dupe_mode.type === "ReviewFirst"
-        ? "review"
-        : "trash"
+    initialDupeMode(initialConfig, saved)
   );
   const [dupeDest, setDupeDest] = useState(
-    initialConfig?.dupe_mode.type === "MoveToFolder" ? initialConfig.dupe_mode.dest : ""
+    initialDupeDest(initialConfig, saved)
   );
-  const [moveUniques, setMoveUniques] = useState(initialConfig?.move_uniques ?? false);
-  const [uniqueDest, setUniqueDest] = useState(initialConfig?.unique_dest ?? "");
+  const [moveUniques, setMoveUniques] = useState(initialConfig?.move_uniques ?? saved?.moveUniques ?? false);
+  const [uniqueDest, setUniqueDest] = useState(initialConfig?.unique_dest ?? saved?.uniqueDest ?? "");
+
+  // Drag-and-drop state: which picker is being hovered
+  const [dragOver, setDragOver] = useState<"reference" | "eval" | null>(null);
+
+  // Listen for Tauri drag-drop events
+  useEffect(() => {
+    const unlisten = listen<DragDropPayload>("tauri://drag-drop", (event) => {
+      const paths = event.payload.paths;
+      if (paths.length > 0 && dragOver) {
+        const droppedPath = paths[0];
+        if (dragOver === "reference") {
+          setReferenceDir(droppedPath);
+        } else {
+          setEvalDir(droppedPath);
+        }
+      }
+      setDragOver(null);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [dragOver]);
 
   const pickFolder = async (setter: (path: string) => void) => {
     const selected = await open({ directory: true, multiple: false });
@@ -35,6 +101,16 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     (!moveUniques || uniqueDest !== "");
 
   const handleStart = () => {
+    // Persist config to localStorage for next session
+    saveSavedConfig({
+      reference_dir: referenceDir,
+      eval_dir: evalDir,
+      dupe_mode: dupeMode,
+      dupeDest,
+      moveUniques,
+      uniqueDest,
+    });
+
     let mode: DupeMode;
     if (dupeMode === "trash") mode = { type: "Trash" };
     else if (dupeMode === "move") mode = { type: "MoveToFolder", dest: dupeDest };
@@ -53,28 +129,34 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     <div className="setup">
       <div className="folder-pickers">
         <div
-          className={`folder-picker ${referenceDir ? "selected" : ""}`}
+          className={`folder-picker ${referenceDir ? "selected" : ""} ${dragOver === "reference" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setReferenceDir)}
+          onDragEnter={(e) => { e.preventDefault(); setDragOver("reference"); }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragOver((prev) => prev === "reference" ? null : prev)}
         >
           <span className="badge badge-protected">Protected</span>
           <div className="picker-label">Reference Folder</div>
           {referenceDir ? (
             <div className="picker-path">{referenceDir}</div>
           ) : (
-            <div className="picker-hint">Click to select your photo library</div>
+            <div className="picker-hint">Click or drop a folder from Finder</div>
           )}
         </div>
 
         <div
-          className={`folder-picker ${evalDir ? "selected" : ""}`}
+          className={`folder-picker ${evalDir ? "selected" : ""} ${dragOver === "eval" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setEvalDir)}
+          onDragEnter={(e) => { e.preventDefault(); setDragOver("eval"); }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragOver((prev) => prev === "eval" ? null : prev)}
         >
           <span className="badge badge-eval">Checking</span>
           <div className="picker-label">Eval Folder</div>
           {evalDir ? (
             <div className="picker-path">{evalDir}</div>
           ) : (
-            <div className="picker-hint">Click to select incoming files to check</div>
+            <div className="picker-hint">Click or drop a folder from Finder</div>
           )}
         </div>
       </div>

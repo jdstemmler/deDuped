@@ -101,6 +101,12 @@ body {
   border-style: solid;
 }
 
+.folder-picker.drag-over {
+  border-color: var(--green-dot);
+  border-style: dashed;
+  background: rgba(29, 158, 117, 0.06);
+}
+
 .folder-picker.selected .badge-protected {
   background: var(--green-bg);
 }
