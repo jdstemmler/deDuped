@@ -1,0 +1,555 @@
+/* ── Reset & Base ─────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b7280;
+  --border: #e5e7eb;
+  --bg: #ffffff;
+  --bg-hover: #f9fafb;
+
+  --green-bg: #e1f5ee;
+  --green-text: #085041;
+  --green-dot: #1d9e75;
+
+  --blue-bg: #e6f1fb;
+  --blue-text: #0c447c;
+
+  --red-bg: #fcebeb;
+  --red-text: #791f1f;
+  --red-dot: #e24b4a;
+  --red-btn: #a32d2d;
+
+  --btn-primary: #1a1a1a;
+  --btn-primary-text: #ffffff;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text-primary);
+  background: var(--bg);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── App Layout ──────────────────────────────────────── */
+.app {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 0.5px solid var(--border);
+}
+
+.app-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* ── Folder Pickers ──────────────────────────────────── */
+.folder-pickers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.folder-picker {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.folder-picker:hover {
+  border-color: #aaa;
+  background: var(--bg-hover);
+}
+
+.folder-picker.selected {
+  border-style: solid;
+}
+
+.folder-picker.selected .badge-protected {
+  background: var(--green-bg);
+}
+
+.folder-picker.selected .badge-eval {
+  background: var(--blue-bg);
+}
+
+.picker-label {
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.picker-path {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.picker-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ── Badges ──────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-protected {
+  background: var(--green-bg);
+  color: var(--green-text);
+}
+
+.badge-eval {
+  background: var(--blue-bg);
+  color: var(--blue-text);
+}
+
+/* ── Config Sections ─────────────────────────────────── */
+.config-section {
+  margin-bottom: 24px;
+}
+
+.config-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* ── Radio Group ─────────────────────────────────────── */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radio-group-horizontal {
+  flex-direction: row;
+}
+
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.radio-card:hover {
+  background: var(--bg-hover);
+}
+
+.radio-card.active {
+  background: var(--bg-hover);
+  border-color: #aaa;
+}
+
+.radio-card input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--btn-primary);
+}
+
+.radio-card strong {
+  display: block;
+  font-size: 14px;
+}
+
+.radio-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Toggle ──────────────────────────────────────────── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #ccc;
+  border-radius: 24px;
+  transition: 0.2s;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: var(--green-dot);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+
+/* ── Inline Picker ───────────────────────────────────── */
+.inline-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.path-display {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 0.5px solid var(--border);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+.btn-primary {
+  background: var(--btn-primary);
+  color: var(--btn-primary-text);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  background: var(--red-btn);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 24px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
+.btn-small {
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-small:hover {
+  background: var(--bg-hover);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 8px 0;
+  margin-top: 8px;
+}
+
+.btn-link:hover {
+  color: var(--text-primary);
+}
+
+.btn-start {
+  width: 100%;
+  padding: 14px;
+  font-size: 16px;
+  margin-top: 8px;
+}
+
+/* ── Scanning Screen ─────────────────────────────────── */
+.scanning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  gap: 16px;
+}
+
+.scan-phase {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.progress-bar {
+  width: 100%;
+  max-width: 500px;
+  height: 8px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--btn-primary);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.scan-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.scan-pct {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.scan-count {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 13px;
+}
+
+/* ── Results Screen ──────────────────────────────────── */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.card {
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.card-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.card-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.card-danger .card-value {
+  color: var(--red-dot);
+}
+
+.card-success .card-value {
+  color: var(--green-dot);
+}
+
+/* ── File List ───────────────────────────────────────── */
+.file-list {
+  max-height: 350px;
+  overflow-y: auto;
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 0.5px solid var(--border);
+  font-size: 13px;
+}
+
+.file-row:last-child {
+  border-bottom: none;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-dupe {
+  background: var(--red-dot);
+}
+
+.dot-unique {
+  background: var(--green-dot);
+}
+
+.file-path {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.tag-dupe {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
+
+.tag-unique {
+  background: var(--green-bg);
+  color: var(--green-text);
+}
+
+/* ── Action Panel ────────────────────────────────────── */
+.action-panel {
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.action-panel h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* ── Completion ──────────────────────────────────────── */
+.completion {
+  text-align: center;
+  padding: 48px 0;
+}
+
+.completion h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.completion p {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.completion .btn-primary {
+  margin-top: 24px;
+}
+
+.error-list {
+  margin-top: 16px;
+  text-align: left;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.error-item {
+  font-size: 12px;
+  color: var(--red-text);
+  padding: 4px 0;
+  font-family: "SF Mono", "Fira Code", monospace;
+}

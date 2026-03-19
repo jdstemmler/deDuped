@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="#1a1a1a"/>
+
+  <!-- Back photo frame (duplicate) - slightly offset -->
+  <rect x="148" y="118" width="200" height="160" rx="12" fill="none" stroke="#555" stroke-width="8" opacity="0.5"/>
+
+  <!-- Front photo frame -->
+  <rect x="168" y="138" width="200" height="160" rx="12" fill="none" stroke="#e5e7eb" stroke-width="8"/>
+
+  <!-- Mountain/photo icon inside front frame -->
+  <path d="M192 268 L228 220 L252 248 L284 196 L344 268 Z" fill="#4a90d9" opacity="0.7"/>
+  <circle cx="216" cy="176" r="14" fill="#f0c040" opacity="0.8"/>
+
+  <!-- Checkmark circle (bottom right) -->
+  <circle cx="340" cy="360" r="64" fill="#1d9e75"/>
+  <path d="M308 358 L330 382 L374 336" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- "dD" text hint -->
+  <text x="180" y="400" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="72" font-weight="700" fill="white" opacity="0.9">dD</text>
+</svg>
