@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ScanConfig, DupeMode } from "../types";
 
@@ -25,7 +25,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
 
   const pickFolder = async (setter: (path: string) => void) => {
     const selected = await open({ directory: true, multiple: false });
-    if (selected) setter(selected as string);
+    if (selected) setter(selected);
   };
 
   const canStart =
@@ -51,7 +51,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
 
   return (
     <div className="setup">
-      {/* Folder pickers */}
       <div className="folder-pickers">
         <div
           className={`folder-picker ${referenceDir ? "selected" : ""}`}
@@ -80,7 +79,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         </div>
       </div>
 
-      {/* Duplicate handling — 3 column radio */}
       <div className="config-section">
         <h3>Duplicate handling</h3>
         <div className="radio-group-3col">
@@ -137,11 +135,10 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         </div>
       </div>
 
-      {/* Non-duplicate handling */}
       <div className="config-section">
         <h3>Non-duplicate handling</h3>
         <div className="unique-row">
-          <label className="toggle-inline">
+          <div className="toggle-inline">
             <label className="toggle">
               <input
                 type="checkbox"
@@ -151,7 +148,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
               <span className="toggle-slider" />
             </label>
             <span>Move unique files to a separate folder</span>
-          </label>
+          </div>
           <div className="inline-picker">
             <code className={`path-display ${!moveUniques ? "disabled" : ""}`}>
               {moveUniques ? (uniqueDest || "No folder selected") : "Unique files stay in place"}
@@ -167,7 +164,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         </div>
       </div>
 
-      {/* Start button */}
       <button className="btn-primary btn-start" disabled={!canStart} onClick={handleStart}>
         Start Scan
       </button>

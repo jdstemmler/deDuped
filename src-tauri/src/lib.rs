@@ -3,6 +3,9 @@ mod commands;
 mod fileops;
 mod hasher;
 
+#[cfg(test)]
+mod tests;
+
 use commands::{execute_action, scan_folders};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1,5 +1,4 @@
 use rusqlite::{Connection, params};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -38,13 +37,32 @@ impl HashCache {
         Ok(Self { conn })
     }
 
+    /// Opens an in-memory cache for testing.
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to open in-memory database: {e}"))?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS file_hashes (
+                path TEXT PRIMARY KEY,
+                hash TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mtime_secs INTEGER NOT NULL,
+                mtime_nanos INTEGER NOT NULL
+            );"
+        ).map_err(|e| format!("Failed to create cache table: {e}"))?;
+
+        Ok(Self { conn })
+    }
+
     fn db_path() -> Result<PathBuf, String> {
         let data_dir = dirs::data_dir()
             .ok_or_else(|| "Could not determine application data directory".to_string())?;
         Ok(data_dir.join("com.photodedup").join("cache.db"))
     }
 
-    /// Look up a cached hash. Returns Some(hash) if the file hasn't changed.
+    /// Returns `Some(hash)` if the file hasn't changed since it was cached.
     pub fn get(&self, path: &str, size: u64, mtime_secs: i64, mtime_nanos: u32) -> Option<String> {
         self.conn
             .query_row(
@@ -55,7 +73,6 @@ impl HashCache {
             .ok()
     }
 
-    /// Insert or update a hash entry.
     pub fn set(&self, entry: &CachedFile) -> Result<(), String> {
         self.conn
             .execute(
@@ -64,19 +81,6 @@ impl HashCache {
             )
             .map_err(|e| format!("Failed to write cache: {e}"))?;
         Ok(())
-    }
-
-    /// Load all cached hashes into a set for fast lookup.
-    pub fn load_hash_set(&self) -> Result<HashSet<String>, String> {
-        let mut stmt = self.conn
-            .prepare("SELECT hash FROM file_hashes")
-            .map_err(|e| format!("Failed to prepare query: {e}"))?;
-        let hashes = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| format!("Failed to query cache: {e}"))?
-            .filter_map(|r| r.ok())
-            .collect();
-        Ok(hashes)
     }
 
     /// Remove entries for paths that no longer exist on disk.

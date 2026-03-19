@@ -1,39 +1,33 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Find sidecar files (.xmp) associated with a given file.
 /// Checks two common naming conventions:
 ///   photo.xmp       (stem + .xmp)
 ///   photo.NEF.xmp   (full filename + .xmp)
-fn find_sidecars(path: &Path) -> Vec<PathBuf> {
-    let mut sidecars = Vec::new();
-    let Some(parent) = path.parent() else { return sidecars };
+pub(crate) fn find_sidecars(path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = path.parent() else { return Vec::new() };
 
-    // Convention 1: same stem, .xmp extension (e.g., DSC_0091.xmp for DSC_0091.NEF)
-    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-        for ext in &["xmp", "XMP"] {
-            let candidate = parent.join(format!("{stem}.{ext}"));
-            if candidate.exists() && candidate != path {
-                sidecars.push(candidate);
-            }
-        }
-    }
+    let stem = path.file_stem().and_then(|s| s.to_str());
+    let name = path.file_name().and_then(|s| s.to_str());
 
-    // Convention 2: full filename + .xmp (e.g., DSC_0091.NEF.xmp)
-    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-        for ext in &["xmp", "XMP"] {
-            let candidate = parent.join(format!("{name}.{ext}"));
-            if candidate.exists() {
-                sidecars.push(candidate);
-            }
-        }
-    }
+    let candidates: Vec<PathBuf> = [
+        stem.map(|s| parent.join(format!("{s}.xmp"))),
+        stem.map(|s| parent.join(format!("{s}.XMP"))),
+        name.map(|n| parent.join(format!("{n}.xmp"))),
+        name.map(|n| parent.join(format!("{n}.XMP"))),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|c| c.exists() && c != path)
+    .collect();
 
+    let mut sidecars = candidates;
+    sidecars.sort();
     sidecars.dedup();
     sidecars
 }
 
-/// Move a file to the macOS Trash (recoverable). Also trashes any associated sidecars.
+/// Also trashes any associated sidecars.
 pub fn trash_file(path: &Path) -> Result<(), String> {
     let sidecars = find_sidecars(path);
     trash::delete(path).map_err(|e| format!("Failed to trash {}: {e}", path.display()))?;
@@ -43,7 +37,7 @@ pub fn trash_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Move a file to a destination, preserving subfolder structure relative to `base_dir`.
+/// Preserves subfolder structure relative to `base_dir`.
 /// Also moves any associated sidecar files. Handles filename collisions with `-1`, `-2`, etc.
 pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     let relative = file_path
@@ -61,7 +55,7 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
     let sidecars = find_sidecars(file_path);
 
     fs::rename(file_path, &final_target).or_else(|_| -> Result<(), String> {
-        // rename fails across filesystems — fall back to copy + delete
+        // rename fails across filesystems -- fall back to copy + delete
         fs::copy(file_path, &final_target)
             .map_err(|e| format!("Failed to copy to {}: {e}", final_target.display()))?;
         fs::remove_file(file_path)
@@ -69,7 +63,7 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
         Ok(())
     })?;
 
-    // Move sidecars alongside the main file (best-effort — don't fail the operation)
+    // Move sidecars alongside the main file (best-effort)
     for sidecar in sidecars {
         if !sidecar.exists() {
             continue;
@@ -90,8 +84,8 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
     Ok(final_target)
 }
 
-/// If `target` already exists, append `-1`, `-2`, etc. before the extension.
-fn resolve_collision(target: &Path) -> PathBuf {
+/// Appends `-1`, `-2`, etc. before the extension if `target` already exists.
+pub(crate) fn resolve_collision(target: &Path) -> PathBuf {
     if !target.exists() {
         return target.to_path_buf();
     }
@@ -120,7 +114,6 @@ fn resolve_collision(target: &Path) -> PathBuf {
     unreachable!()
 }
 
-/// Remove empty directories bottom-up starting from `dir`.
 pub fn cleanup_empty_dirs(dir: &Path) -> Result<usize, String> {
     let mut removed = 0;
     cleanup_empty_dirs_recursive(dir, dir, &mut removed)?;
@@ -147,7 +140,7 @@ fn cleanup_empty_dirs_recursive(
         }
     }
 
-    // Re-read after recursion — children may have been removed
+    // Re-read after recursion -- children may have been removed
     if current != root {
         let still_entries: Vec<_> = fs::read_dir(current)
             .map_err(|e| format!("Failed to re-read dir {}: {e}", current.display()))?

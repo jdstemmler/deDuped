@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -10,8 +10,6 @@ use tauri::{AppHandle, Emitter};
 use crate::cache::HashCache;
 use crate::fileops;
 use crate::hasher;
-
-// ── Types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanConfig {
@@ -35,6 +33,7 @@ pub struct ScanResult {
     pub total_eval: usize,
     pub duplicates: Vec<EvalFile>,
     pub uniques: Vec<EvalFile>,
+    pub skipped: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,9 +67,6 @@ pub struct ActionResult {
     pub dirs_cleaned: usize,
 }
 
-// ── Commands ─────────────────────────────────────────────────────────
-
-/// Emit a progress event to the frontend.
 fn emit_progress(app: &AppHandle, phase: &str, current: usize, total: usize) {
     let _ = app.emit("scan-progress", ProgressEvent {
         phase: phase.to_string(),
@@ -114,7 +110,7 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     std::thread::spawn(move || {
-        let result = scan_folders_blocking(&config, &app, &ref_dir, &eval_dir);
+        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir);
         let _ = tx.send(result);
     });
 
@@ -122,12 +118,11 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
 }
 
 fn scan_folders_blocking(
-    config: &ScanConfig,
     app: &AppHandle,
     ref_dir: &Path,
     eval_dir: &Path,
 ) -> Result<ScanResult, String> {
-    // Open cache
+    // Open cache once and reuse for the entire scan
     let cache = HashCache::open()?;
     let _ = cache.prune();
 
@@ -145,14 +140,11 @@ fn scan_folders_blocking(
         ref_total,
     );
 
-    let ref_hashed = {
-        let cache = HashCache::open()?;
-        hasher::hash_files_cached(&ref_files, &cache, ref_progress)
-    };
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress);
     let _ = reporter.join();
 
     // Build hash set from reference
-    let ref_hashes: HashSet<String> = ref_hashed.iter().map(|f| f.hash.clone()).collect();
+    let ref_hashes: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
 
     // Phase 2a: Collect eval files
     emit_progress(app, "Collecting eval files...", 0, 0);
@@ -168,22 +160,25 @@ fn scan_folders_blocking(
         eval_total,
     );
 
-    let eval_hashed = {
-        let cache = HashCache::open()?;
-        hasher::hash_files_cached(&eval_files, &cache, eval_progress)
-    };
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress);
     let _ = reporter.join();
+
+    // Sort eval results by path for deterministic intra-eval duplicate detection
+    let mut eval_hashed = eval_result.hashed;
+    eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let skipped = ref_result.skipped.len() + eval_result.skipped.len();
 
     // Detect intra-eval duplicates: track which hashes we've already seen
     emit_progress(app, "Comparing files...", 0, 0);
-    let mut seen_eval_hashes: HashMap<String, usize> = HashMap::new();
+    let mut seen_eval_hashes: HashSet<String> = HashSet::new();
 
     let mut duplicates = Vec::new();
     let mut uniques = Vec::new();
 
-    for (idx, ef) in eval_hashed.iter().enumerate() {
+    for ef in &eval_hashed {
         let is_ref_dupe = ref_hashes.contains(&ef.hash);
-        let is_intra_dupe = seen_eval_hashes.contains_key(&ef.hash);
+        let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
         let is_duplicate = is_ref_dupe || is_intra_dupe;
 
         let relative_path = Path::new(&ef.path)
@@ -207,7 +202,7 @@ fn scan_folders_blocking(
         }
 
         if !is_ref_dupe {
-            seen_eval_hashes.entry(ef.hash.clone()).or_insert(idx);
+            seen_eval_hashes.insert(ef.hash.clone());
         }
     }
 
@@ -215,6 +210,7 @@ fn scan_folders_blocking(
         total_eval: eval_hashed.len(),
         duplicates,
         uniques,
+        skipped,
     })
 }
 

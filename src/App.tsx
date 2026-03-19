@@ -37,7 +37,7 @@ export default function App() {
           <SetupScreen onStart={handleStartScan} initialConfig={config} />
         )}
         {screen === "scanning" && config && (
-          <ScanningScreen config={config} onComplete={handleScanComplete} />
+          <ScanningScreen config={config} onComplete={handleScanComplete} onBack={handleNewScan} />
         )}
         {screen === "results" && config && result && (
           <ResultsScreen

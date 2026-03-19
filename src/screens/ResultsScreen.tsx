@@ -22,11 +22,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [reviewDest, setReviewDest] = useState("");
   const [actionDone, setActionDone] = useState(false);
   const [actionResult, setActionResult] = useState<ActionResult | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
 
   const pickFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
-    if (selected) setReviewDest(selected as string);
+    if (selected) setReviewDest(selected);
   };
 
   const canAct = isReview
@@ -35,6 +36,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
 
   const handleAction = async (dupeFiles: EvalFile[], mode: ActionMode) => {
     setExecuting(true);
+    setActionError(null);
     try {
       const res = await invoke<ActionResult>("execute_action", {
         evalDir: config.eval_dir,
@@ -42,19 +44,25 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
         action: mode,
       });
 
-      // Handle unique files if configured
+      let merged = { ...res };
+
       if (config.move_uniques && config.unique_dest) {
-        await invoke<ActionResult>("execute_action", {
+        const uniqueRes = await invoke<ActionResult>("execute_action", {
           evalDir: config.eval_dir,
           files: result.uniques.map((f) => f.path),
           action: { type: "MoveToFolder", dest: config.unique_dest },
         });
+        merged = {
+          processed: merged.processed + uniqueRes.processed,
+          errors: [...merged.errors, ...uniqueRes.errors],
+          dirs_cleaned: merged.dirs_cleaned + uniqueRes.dirs_cleaned,
+        };
       }
 
-      setActionResult(res);
+      setActionResult(merged);
       setActionDone(true);
     } catch (err) {
-      console.error("Action failed:", err);
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setExecuting(false);
     }
@@ -71,7 +79,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } else if (config.dupe_mode.type === "MoveToFolder") {
       mode = { type: "MoveToFolder", dest: config.dupe_mode.dest };
     } else {
-      mode = { type: "Nothing" };
+      return; // unreachable: non-review mode is always Trash or MoveToFolder
     }
     handleAction(result.duplicates, mode);
   };
@@ -104,7 +112,6 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   return (
     <div className="results">
       <div className="results-layout">
-        {/* Left: File list */}
         <div className="results-files">
           <div className="file-list">
             {[...result.duplicates, ...result.uniques].map((file) => (
@@ -120,7 +127,6 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
           </div>
         </div>
 
-        {/* Right: Summary + Actions */}
         <div className="results-sidebar">
           <div className="summary-bar">
             <div className="stat">
@@ -135,9 +141,21 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               <span className="stat-value">{result.uniques.length}</span>
               <span className="stat-label">unique</span>
             </div>
+            {result.skipped > 0 && (
+              <div className="stat stat-warning">
+                <span className="stat-value">{result.skipped}</span>
+                <span className="stat-label">skipped</span>
+              </div>
+            )}
           </div>
 
-          {/* Action panel */}
+          {actionError && (
+            <div className="error-list">
+              <h4>Action Failed</h4>
+              <div className="error-item">{actionError}</div>
+            </div>
+          )}
+
           {isReview ? (
             <div className="action-panel">
               <h3>What to do with duplicates?</h3>

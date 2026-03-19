@@ -6,12 +6,14 @@ import type { ScanConfig, ScanResult, ProgressEvent } from "../types";
 interface Props {
   config: ScanConfig;
   onComplete: (result: ScanResult) => void;
+  onBack: () => void;
 }
 
-export default function ScanningScreen({ config, onComplete }: Props) {
+export default function ScanningScreen({ config, onComplete, onBack }: Props) {
   const [phase, setPhase] = useState("Starting scan...");
   const [current, setCurrent] = useState(0);
   const [total, setTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const scanInvokedRef = useRef(false);
   const cancelledRef = useRef(false);
 
@@ -33,7 +35,9 @@ export default function ScanningScreen({ config, onComplete }: Props) {
           const result = await invoke<ScanResult>("scan_folders", { config });
           if (!cancelledRef.current) onComplete(result);
         } catch (err) {
-          console.error("Scan failed:", err);
+          if (!cancelledRef.current) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
         }
       }
     };
@@ -45,6 +49,20 @@ export default function ScanningScreen({ config, onComplete }: Props) {
       if (unlisten) unlisten();
     };
   }, []);
+
+  if (error) {
+    return (
+      <div className="scanning">
+        <div className="scan-error">
+          <h2>Scan Failed</h2>
+          <p className="error-message">{error}</p>
+          <button className="btn-primary" onClick={onBack}>
+            &larr; Back to Setup
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const pct = total > 0 ? Math.round((current / total) * 100) : 0;
 

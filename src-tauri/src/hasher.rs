@@ -16,7 +16,6 @@ const PHOTO_EXTENSIONS: &[&str] = &[
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "avi", "mkv"];
 
-/// Check if a file extension matches our supported types.
 fn is_supported_file(path: &Path) -> bool {
     let ext = match path.extension().and_then(|e| e.to_str()) {
         Some(e) => e.to_lowercase(),
@@ -25,12 +24,10 @@ fn is_supported_file(path: &Path) -> bool {
     PHOTO_EXTENSIONS.contains(&ext.as_str()) || VIDEO_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// Check if a path component is hidden (starts with `.`).
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
     entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
 }
 
-/// Walk a directory and collect all supported file paths.
 pub fn collect_files(dir: &Path) -> Vec<PathBuf> {
     WalkDir::new(dir)
         .into_iter()
@@ -42,12 +39,11 @@ pub fn collect_files(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Hash a single file with SHA-256.
 pub fn hash_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
+    let mut buffer = [0u8; 131_072]; // 128 KB
     loop {
         let n = file.read(&mut buffer)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
@@ -59,7 +55,6 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Get file metadata (size, mtime) for cache comparison.
 fn file_meta(path: &Path) -> Result<(u64, i64, u32), String> {
     let meta = fs::metadata(path)
         .map_err(|e| format!("Failed to read metadata for {}: {e}", path.display()))?;
@@ -78,7 +73,19 @@ pub struct HashedFile {
     pub size: u64,
 }
 
-/// Metadata needed for cache lookups and hashing.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Successful hashes plus any files that could not be hashed.
+#[derive(Debug)]
+pub struct HashResult {
+    pub hashed: Vec<HashedFile>,
+    pub skipped: Vec<SkippedFile>,
+}
+
 struct FileMeta {
     path: PathBuf,
     path_str: String,
@@ -87,23 +94,23 @@ struct FileMeta {
     mtime_nanos: u32,
 }
 
-/// Hash files in parallel, using the cache for already-known files.
-/// Strategy: check cache serially (fast), hash misses in parallel, update cache serially.
+/// Check cache serially (fast), hash misses in parallel, update cache serially.
 pub fn hash_files_cached(
     files: &[PathBuf],
     cache: &HashCache,
     progress: Arc<AtomicUsize>,
-) -> Vec<HashedFile> {
-    // Phase 1: Check cache for each file (serial — rusqlite is not Sync)
+) -> HashResult {
     let mut results: Vec<HashedFile> = Vec::with_capacity(files.len());
     let mut needs_hashing: Vec<FileMeta> = Vec::new();
+    let mut skipped: Vec<SkippedFile> = Vec::new();
 
     for path in files {
         let path_str = path.to_string_lossy().to_string();
         let meta = match file_meta(path) {
             Ok(m) => m,
-            Err(_) => {
+            Err(reason) => {
                 progress.fetch_add(1, Ordering::Relaxed);
+                skipped.push(SkippedFile { path: path_str, reason });
                 continue;
             }
         };
@@ -123,32 +130,45 @@ pub fn hash_files_cached(
         }
     }
 
-    // Phase 2: Hash cache misses in parallel
+    // Hash cache misses in parallel
     let progress_clone = progress.clone();
-    let newly_hashed: Vec<(FileMeta, String)> = needs_hashing
+    let newly_hashed: Vec<Result<(FileMeta, String), SkippedFile>> = needs_hashing
         .into_par_iter()
-        .filter_map(|fm| {
-            let hash = hash_file(&fm.path).ok()?;
-            progress_clone.fetch_add(1, Ordering::Relaxed);
-            Some((fm, hash))
+        .map(|fm| {
+            match hash_file(&fm.path) {
+                Ok(hash) => {
+                    progress_clone.fetch_add(1, Ordering::Relaxed);
+                    Ok((fm, hash))
+                }
+                Err(reason) => {
+                    progress_clone.fetch_add(1, Ordering::Relaxed);
+                    let path = fm.path_str.clone();
+                    Err(SkippedFile { path, reason })
+                }
+            }
         })
         .collect();
 
-    // Phase 3: Update cache and collect results (serial)
-    for (fm, hash) in newly_hashed {
-        let _ = cache.set(&CachedFile {
-            path: fm.path_str.clone(),
-            hash: hash.clone(),
-            size: fm.size,
-            mtime_secs: fm.mtime_secs,
-            mtime_nanos: fm.mtime_nanos,
-        });
-        results.push(HashedFile {
-            path: fm.path_str,
-            hash,
-            size: fm.size,
-        });
+    // Update cache and collect results (serial)
+    for item in newly_hashed {
+        match item {
+            Ok((fm, hash)) => {
+                let _ = cache.set(&CachedFile {
+                    path: fm.path_str.clone(),
+                    hash: hash.clone(),
+                    size: fm.size,
+                    mtime_secs: fm.mtime_secs,
+                    mtime_nanos: fm.mtime_nanos,
+                });
+                results.push(HashedFile {
+                    path: fm.path_str,
+                    hash,
+                    size: fm.size,
+                });
+            }
+            Err(sf) => skipped.push(sf),
+        }
     }
 
-    results
+    HashResult { hashed: results, skipped }
 }

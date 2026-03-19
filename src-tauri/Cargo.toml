@@ -23,9 +23,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 trash = "5"
 walkdir = "2"
 hex = "0.4"
-chrono = "0.4"
 dirs = "6"
 tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

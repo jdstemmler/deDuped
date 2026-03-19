@@ -15,6 +15,7 @@ export interface ScanResult {
   total_eval: number;
   duplicates: EvalFile[];
   uniques: EvalFile[];
+  skipped: number;
 }
 
 export interface EvalFile {
