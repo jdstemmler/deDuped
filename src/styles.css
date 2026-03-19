@@ -166,6 +166,36 @@ body {
   margin-bottom: 10px;
 }
 
+/* ── Category Pills ──────────────────────────────────── */
+.category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.category-pill {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: all 0.15s;
+}
+
+.category-pill:hover {
+  border-color: #aaa;
+  background: var(--bg-hover);
+}
+
+.category-pill.active {
+  background: #1a1a1a;
+  color: #ffffff;
+  border-color: #1a1a1a;
+}
+
 /* ── Radio Group ─────────────────────────────────────── */
 .radio-group {
   display: flex;

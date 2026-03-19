@@ -1,5 +1,6 @@
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -9,32 +10,69 @@ use walkdir::WalkDir;
 
 use crate::cache::{CachedFile, HashCache};
 
-const PHOTO_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "heic", "heif",
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp", "heic", "heif",
     "cr2", "cr3", "nef", "arw", "orf", "rw2", "dng", "raf", "pef", "srw", "x3f",
 ];
 
-const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "avi", "mkv"];
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv", "webm", "mts", "m2ts",
+];
 
-fn is_supported_file(path: &Path) -> bool {
-    let ext = match path.extension().and_then(|e| e.to_str()) {
-        Some(e) => e.to_lowercase(),
-        None => return false,
-    };
-    PHOTO_EXTENSIONS.contains(&ext.as_str()) || VIDEO_EXTENSIONS.contains(&ext.as_str())
+pub const DOCUMENT_EXTENSIONS: &[&str] = &[
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "md",
+    "csv", "psd", "ai", "indd", "sketch", "fig",
+];
+
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "aac", "wav", "aiff", "ogg", "m4a", "wma", "alac",
+];
+
+/// Resolve category names into an optional set of allowed extensions.
+/// Returns `None` if `all_files` is true (accept everything).
+/// Returns `Some(set)` with the combined extensions from all enabled categories.
+pub fn resolve_extensions(categories: &[String], all_files: bool) -> Option<HashSet<String>> {
+    if all_files {
+        return None;
+    }
+    let mut set = HashSet::new();
+    for cat in categories {
+        let exts: &[&str] = match cat.to_lowercase().as_str() {
+            "images" => IMAGE_EXTENSIONS,
+            "videos" => VIDEO_EXTENSIONS,
+            "documents" => DOCUMENT_EXTENSIONS,
+            "audio" => AUDIO_EXTENSIONS,
+            _ => continue,
+        };
+        for ext in exts {
+            set.insert(ext.to_string());
+        }
+    }
+    Some(set)
 }
 
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
     entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
 }
 
-pub fn collect_files(dir: &Path) -> Vec<PathBuf> {
+pub fn collect_files(dir: &Path, allowed_extensions: Option<&HashSet<String>>) -> Vec<PathBuf> {
     WalkDir::new(dir)
         .into_iter()
         .filter_entry(|e| !is_hidden(e))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| is_supported_file(e.path()))
+        .filter(|e| {
+            match allowed_extensions {
+                None => true,
+                Some(exts) => {
+                    e.path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| exts.contains(&ext.to_lowercase()))
+                        .unwrap_or(false)
+                }
+            }
+        })
         .map(|e| e.into_path())
         .collect()
 }

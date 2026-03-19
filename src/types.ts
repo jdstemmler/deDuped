@@ -4,6 +4,8 @@ export interface ScanConfig {
   dupe_mode: DupeMode;
   move_uniques: boolean;
   unique_dest: string | null;
+  categories: string[];
+  all_files: boolean;
 }
 
 export type DupeMode =

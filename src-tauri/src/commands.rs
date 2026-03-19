@@ -20,6 +20,8 @@ pub struct ScanConfig {
     pub dupe_mode: DupeMode,
     pub move_uniques: bool,
     pub unique_dest: Option<String>,
+    pub categories: Vec<String>,
+    pub all_files: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +114,7 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     std::thread::spawn(move || {
-        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir);
+        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config);
         let _ = tx.send(result);
     });
 
@@ -123,14 +125,18 @@ fn scan_folders_blocking(
     app: &AppHandle,
     ref_dir: &Path,
     eval_dir: &Path,
+    config: &ScanConfig,
 ) -> Result<ScanResult, String> {
+    // Resolve which extensions to accept based on user-selected categories
+    let allowed = hasher::resolve_extensions(&config.categories, config.all_files);
+
     // Open cache once and reuse for the entire scan
     let cache = HashCache::open()?;
     let _ = cache.prune();
 
     // Phase 1a: Collect reference files
     emit_progress(app, "Collecting reference files...", 0, 0);
-    let ref_files = hasher::collect_files(ref_dir);
+    let ref_files = hasher::collect_files(ref_dir, allowed.as_ref());
     let ref_total = ref_files.len();
 
     // Phase 1b: Hash reference folder
@@ -150,7 +156,7 @@ fn scan_folders_blocking(
 
     // Phase 2a: Collect eval files
     emit_progress(app, "Collecting eval files...", 0, 0);
-    let eval_files = hasher::collect_files(eval_dir);
+    let eval_files = hasher::collect_files(eval_dir, allowed.as_ref());
     let eval_total = eval_files.len();
 
     // Phase 2b: Hash eval folder

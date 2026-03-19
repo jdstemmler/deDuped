@@ -12,6 +12,8 @@ interface SavedConfig {
   dupeDest: string;
   moveUniques: boolean;
   uniqueDest: string;
+  selectedCategories: string[];
+  allFiles: boolean;
 }
 
 function loadSavedConfig(): SavedConfig | null {
@@ -66,6 +68,17 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
   const [moveUniques, setMoveUniques] = useState(initialConfig?.move_uniques ?? saved?.moveUniques ?? false);
   const [uniqueDest, setUniqueDest] = useState(initialConfig?.unique_dest ?? saved?.uniqueDest ?? "");
 
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(
+    () => {
+      if (initialConfig) return new Set(initialConfig.categories);
+      if (saved?.selectedCategories) return new Set(saved.selectedCategories);
+      return new Set(["images"]);
+    }
+  );
+  const [allFiles, setAllFiles] = useState(
+    initialConfig?.all_files ?? saved?.allFiles ?? false
+  );
+
   // Drag-and-drop state: which picker is being hovered
   const [dragOver, setDragOver] = useState<"reference" | "eval" | null>(null);
 
@@ -98,7 +111,8 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     referenceDir !== "" &&
     evalDir !== "" &&
     (dupeMode !== "move" || dupeDest !== "") &&
-    (!moveUniques || uniqueDest !== "");
+    (!moveUniques || uniqueDest !== "") &&
+    (allFiles || selectedCategories.size > 0);
 
   const handleStart = () => {
     // Persist config to localStorage for next session
@@ -109,6 +123,8 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       dupeDest,
       moveUniques,
       uniqueDest,
+      selectedCategories: Array.from(selectedCategories),
+      allFiles,
     });
 
     let mode: DupeMode;
@@ -122,6 +138,8 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       dupe_mode: mode,
       move_uniques: moveUniques,
       unique_dest: moveUniques ? uniqueDest : null,
+      categories: Array.from(selectedCategories),
+      all_files: allFiles,
     });
   };
 
@@ -158,6 +176,38 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
           ) : (
             <div className="picker-hint">Click or drop a folder from Finder</div>
           )}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>File types</h3>
+        <div className="category-pills">
+          {(["images", "videos", "documents", "audio"] as const).map((cat) => (
+            <button
+              key={cat}
+              className={`category-pill ${!allFiles && selectedCategories.has(cat) ? "active" : ""}`}
+              onClick={() => {
+                setAllFiles(false);
+                setSelectedCategories((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(cat)) next.delete(cat);
+                  else next.add(cat);
+                  return next;
+                });
+              }}
+            >
+              {cat.charAt(0).toUpperCase() + cat.slice(1)}
+            </button>
+          ))}
+          <button
+            className={`category-pill ${allFiles ? "active" : ""}`}
+            onClick={() => {
+              setAllFiles(true);
+              setSelectedCategories(new Set());
+            }}
+          >
+            All Files
+          </button>
         </div>
       </div>
 
