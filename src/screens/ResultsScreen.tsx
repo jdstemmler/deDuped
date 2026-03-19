@@ -103,106 +103,108 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
 
   return (
     <div className="results">
-      {/* Summary cards */}
-      <div className="summary-cards">
-        <div className="card">
-          <div className="card-value">{result.total_eval}</div>
-          <div className="card-label">Total Scanned</div>
-        </div>
-        <div className="card card-danger">
-          <div className="card-value">{result.duplicates.length}</div>
-          <div className="card-label">Duplicates</div>
-        </div>
-        <div className="card card-success">
-          <div className="card-value">{result.uniques.length}</div>
-          <div className="card-label">Unique</div>
-        </div>
-      </div>
-
-      {/* File list */}
-      <div className="file-list">
-        {[...result.duplicates, ...result.uniques].map((file) => (
-          <div key={file.path} className="file-row">
-            <span className={`status-dot ${file.is_duplicate ? "dot-dupe" : "dot-unique"}`} />
-            <span className="file-path">{file.relative_path}</span>
-            <span className="file-size">{formatSize(file.size)}</span>
-            <span className={`tag ${file.is_duplicate ? "tag-dupe" : "tag-unique"}`}>
-              {file.is_duplicate ? "Duplicate" : "Unique"}
-            </span>
+      <div className="results-layout">
+        {/* Left: File list */}
+        <div className="results-files">
+          <div className="file-list">
+            {[...result.duplicates, ...result.uniques].map((file) => (
+              <div key={file.path} className="file-row">
+                <span className={`status-dot ${file.is_duplicate ? "dot-dupe" : "dot-unique"}`} />
+                <span className="file-path">{file.relative_path}</span>
+                <span className="file-size">{formatSize(file.size)}</span>
+                <span className={`tag ${file.is_duplicate ? "tag-dupe" : "tag-unique"}`}>
+                  {file.is_duplicate ? "Duplicate" : "Unique"}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
 
-      {/* Action panel */}
-      {isReview ? (
-        <div className="action-panel">
-          <h3>What to do with duplicates?</h3>
-          <div className="radio-group radio-group-horizontal">
-            <label className={`radio-card ${reviewAction === "trash" ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="reviewAction"
-                checked={reviewAction === "trash"}
-                onChange={() => setReviewAction("trash")}
-              />
-              <span>Move to trash</span>
-            </label>
-            <label className={`radio-card ${reviewAction === "move" ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="reviewAction"
-                checked={reviewAction === "move"}
-                onChange={() => setReviewAction("move")}
-              />
-              <span>Move to folder</span>
-            </label>
-            <label className={`radio-card ${reviewAction === "nothing" ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="reviewAction"
-                checked={reviewAction === "nothing"}
-                onChange={() => setReviewAction("nothing")}
-              />
-              <span>Leave them</span>
-            </label>
+        {/* Right: Summary + Actions */}
+        <div className="results-sidebar">
+          <div className="summary-bar">
+            <div className="stat">
+              <span className="stat-value">{result.total_eval}</span>
+              <span className="stat-label">scanned</span>
+            </div>
+            <div className="stat stat-danger">
+              <span className="stat-value">{result.duplicates.length}</span>
+              <span className="stat-label">dupes</span>
+            </div>
+            <div className="stat stat-success">
+              <span className="stat-value">{result.uniques.length}</span>
+              <span className="stat-label">unique</span>
+            </div>
           </div>
-          {reviewAction === "move" && (
-            <div className="inline-picker">
-              <code className="path-display">{reviewDest || "No folder selected"}</code>
-              <button className="btn-small" onClick={pickFolder}>Browse...</button>
+
+          {/* Action panel */}
+          {isReview ? (
+            <div className="action-panel">
+              <h3>What to do with duplicates?</h3>
+              <div className="radio-group">
+                <label className={`radio-card-compact ${reviewAction === "trash" ? "active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="reviewAction"
+                    checked={reviewAction === "trash"}
+                    onChange={() => setReviewAction("trash")}
+                  />
+                  <span>Move to trash</span>
+                </label>
+                <label className={`radio-card-compact ${reviewAction === "move" ? "active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="reviewAction"
+                    checked={reviewAction === "move"}
+                    onChange={() => setReviewAction("move")}
+                  />
+                  <span>Move to folder</span>
+                </label>
+                <label className={`radio-card-compact ${reviewAction === "nothing" ? "active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="reviewAction"
+                    checked={reviewAction === "nothing"}
+                    onChange={() => setReviewAction("nothing")}
+                  />
+                  <span>Leave them</span>
+                </label>
+              </div>
+              <div className={`inline-picker ${reviewAction !== "move" ? "invisible" : ""}`}>
+                <code className="path-display">{reviewDest || "No folder selected"}</code>
+                <button className="btn-small" onClick={pickFolder} disabled={reviewAction !== "move"}>Browse...</button>
+              </div>
+              <div className="action-buttons">
+                <button
+                  className={`btn-primary ${reviewAction === "trash" ? "btn-danger" : ""}`}
+                  disabled={!canAct || executing}
+                  onClick={handleConfirmAction}
+                >
+                  {executing ? "Processing..." : reviewAction === "trash" ? "Move to Trash" : reviewAction === "move" ? "Move Files" : "Done"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="action-panel">
+              <div className="action-buttons">
+                <button
+                  className={`btn-primary ${config.dupe_mode.type === "Trash" ? "btn-danger" : ""}`}
+                  disabled={executing}
+                  onClick={handleConfirmAction}
+                >
+                  {executing
+                    ? "Processing..."
+                    : config.dupe_mode.type === "Trash"
+                      ? `Move ${result.duplicates.length} to Trash`
+                      : `Move ${result.duplicates.length} Files`}
+                </button>
+              </div>
             </div>
           )}
-          <div className="action-buttons">
-            <button className="btn-secondary" onClick={onNewScan}>Cancel</button>
-            <button
-              className={`btn-primary ${reviewAction === "trash" ? "btn-danger" : ""}`}
-              disabled={!canAct || executing}
-              onClick={handleConfirmAction}
-            >
-              {executing ? "Processing..." : reviewAction === "trash" ? "Move to Trash" : reviewAction === "move" ? "Move Files" : "Done"}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="action-panel">
-          <div className="action-buttons">
-            <button className="btn-secondary" onClick={onNewScan}>Cancel</button>
-            <button
-              className={`btn-primary ${config.dupe_mode.type === "Trash" ? "btn-danger" : ""}`}
-              disabled={executing}
-              onClick={handleConfirmAction}
-            >
-              {executing
-                ? "Processing..."
-                : config.dupe_mode.type === "Trash"
-                  ? `Move ${result.duplicates.length} to Trash`
-                  : `Move ${result.duplicates.length} Files`}
-            </button>
-          </div>
-        </div>
-      )}
 
-      <button className="btn-link" onClick={onNewScan}>← New Scan</button>
+          <button className="btn-link" onClick={onNewScan}>← New Scan</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -80,10 +80,10 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         </div>
       </div>
 
-      {/* Dupe handling */}
+      {/* Duplicate handling — 3 column radio */}
       <div className="config-section">
         <h3>Duplicate handling</h3>
-        <div className="radio-group">
+        <div className="radio-group-3col">
           <label className={`radio-card ${dupeMode === "trash" ? "active" : ""}`}>
             <input
               type="radio"
@@ -93,7 +93,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             />
             <div>
               <strong>Move to trash</strong>
-              <span className="radio-desc">Send duplicates to macOS Trash (recoverable)</span>
+              <span className="radio-desc">Send to macOS Trash (recoverable)</span>
             </div>
           </label>
 
@@ -107,14 +107,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             <div>
               <strong>Move to folder</strong>
               <span className="radio-desc">Move duplicates to a specific folder</span>
-              {dupeMode === "move" && (
-                <div className="inline-picker" onClick={(e) => e.stopPropagation()}>
-                  <code className="path-display">{dupeDest || "No folder selected"}</code>
-                  <button className="btn-small" onClick={() => pickFolder(setDupeDest)}>
-                    Browse...
-                  </button>
-                </div>
-              )}
             </div>
           </label>
 
@@ -127,34 +119,52 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             />
             <div>
               <strong>Review first</strong>
-              <span className="radio-desc">Scan only — decide what to do after seeing results</span>
+              <span className="radio-desc">Scan only — decide after seeing results</span>
             </div>
           </label>
         </div>
+        <div className="dest-picker-row">
+          <div className="dest-picker-slot">
+            {dupeMode === "move" && (
+              <div className="inline-picker">
+                <code className="path-display">{dupeDest || "No folder selected"}</code>
+                <button className="btn-small" onClick={() => pickFolder(setDupeDest)}>
+                  Browse...
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Unique file handling */}
+      {/* Non-duplicate handling */}
       <div className="config-section">
         <h3>Non-duplicate handling</h3>
-        <div className="toggle-row">
-          <span>Move unique files to a separate folder</span>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={moveUniques}
-              onChange={(e) => setMoveUniques(e.target.checked)}
-            />
-            <span className="toggle-slider" />
+        <div className="unique-row">
+          <label className="toggle-inline">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={moveUniques}
+                onChange={(e) => setMoveUniques(e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+            <span>Move unique files to a separate folder</span>
           </label>
-        </div>
-        {moveUniques && (
           <div className="inline-picker">
-            <code className="path-display">{uniqueDest || "No folder selected"}</code>
-            <button className="btn-small" onClick={() => pickFolder(setUniqueDest)}>
+            <code className={`path-display ${!moveUniques ? "disabled" : ""}`}>
+              {moveUniques ? (uniqueDest || "No folder selected") : "Unique files stay in place"}
+            </code>
+            <button
+              className="btn-small"
+              disabled={!moveUniques}
+              onClick={() => pickFolder(setUniqueDest)}
+            >
               Browse...
             </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Start button */}

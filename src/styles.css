@@ -40,18 +40,29 @@ body {
 
 /* ── App Layout ──────────────────────────────────────── */
 .app {
-  max-width: 800px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 24px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 32px;
-  padding-bottom: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
   border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header h1 {
@@ -75,7 +86,7 @@ body {
 .folder-picker {
   border: 2px dashed var(--border);
   border-radius: 8px;
-  padding: 24px;
+  padding: 20px;
   text-align: center;
   cursor: pointer;
   transition: all 0.15s;
@@ -107,7 +118,9 @@ body {
   font-family: "SF Mono", "Fira Code", monospace;
   font-size: 12px;
   color: var(--text-secondary);
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .picker-hint {
@@ -138,24 +151,26 @@ body {
 
 /* ── Config Sections ─────────────────────────────────── */
 .config-section {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .config-section h3 {
   font-size: 14px;
   font-weight: 600;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 /* ── Radio Group ─────────────────────────────────────── */
 .radio-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
-.radio-group-horizontal {
-  flex-direction: row;
+.radio-group-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
 }
 
 .radio-card {
@@ -164,7 +179,7 @@ body {
   gap: 10px;
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -193,6 +208,45 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+/* ── Dest Picker Row ─────────────────────────────────── */
+.dest-picker-row {
+  min-height: 40px;
+  margin-top: 8px;
+}
+
+.dest-picker-slot {
+  max-width: 500px;
+}
+
+/* ── Unique Files Row ────────────────────────────────── */
+.unique-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.toggle-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.unique-row .inline-picker {
+  flex: 1;
+  margin-top: 0;
+}
+
+.path-display.disabled {
+  opacity: 0.4;
+}
+
+.invisible {
+  visibility: hidden;
 }
 
 /* ── Toggle ──────────────────────────────────────────── */
@@ -339,8 +393,8 @@ body {
 
 .btn-start {
   width: 100%;
-  padding: 14px;
-  font-size: 16px;
+  padding: 12px;
+  font-size: 15px;
   margin-top: 8px;
 }
 
@@ -393,48 +447,81 @@ body {
 }
 
 /* ── Results Screen ──────────────────────────────────── */
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 24px;
+.results {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.card {
+.results-layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+.results-files {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.results-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.summary-bar {
+  display: flex;
+  gap: 0;
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 16px;
-  text-align: center;
+  overflow: hidden;
 }
 
-.card-value {
-  font-size: 28px;
+.stat {
+  flex: 1;
+  padding: 10px 8px;
+  text-align: center;
+  border-right: 0.5px solid var(--border);
+}
+
+.stat:last-child {
+  border-right: none;
+}
+
+.stat-value {
+  display: block;
+  font-size: 20px;
   font-weight: 700;
 }
 
-.card-label {
-  font-size: 12px;
+.stat-label {
+  display: block;
+  font-size: 10px;
   color: var(--text-secondary);
-  margin-top: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.card-danger .card-value {
+.stat-danger .stat-value {
   color: var(--red-dot);
 }
 
-.card-success .card-value {
+.stat-success .stat-value {
   color: var(--green-dot);
 }
 
 /* ── File List ───────────────────────────────────────── */
 .file-list {
-  max-height: 350px;
+  flex: 1;
   overflow-y: auto;
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  margin-bottom: 24px;
 }
 
 .file-row {
@@ -498,12 +585,37 @@ body {
   color: var(--green-text);
 }
 
+/* ── Compact Radio (sidebar) ─────────────────────────── */
+.radio-card-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.radio-card-compact:hover {
+  background: var(--bg-hover);
+}
+
+.radio-card-compact.active {
+  background: var(--bg-hover);
+  border-color: #aaa;
+}
+
+.radio-card-compact input[type="radio"] {
+  accent-color: var(--btn-primary);
+}
+
 /* ── Action Panel ────────────────────────────────────── */
 .action-panel {
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 16px;
+  padding: 16px;
 }
 
 .action-panel h3 {
@@ -514,9 +626,15 @@ body {
 
 .action-buttons {
   display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-  margin-top: 16px;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.action-buttons .btn-primary,
+.action-buttons .btn-secondary {
+  width: 100%;
+  text-align: center;
 }
 
 /* ── Completion ──────────────────────────────────────── */
