@@ -14,6 +14,8 @@ export default function ScanningScreen({ config, onComplete, onBack }: Props) {
   const [current, setCurrent] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // React StrictMode double-invokes effects in dev. This ref ensures
+  // scan_folders is only called once across mount/remount cycles.
   const scanInvokedRef = useRef(false);
   const cancelledRef = useRef(false);
 

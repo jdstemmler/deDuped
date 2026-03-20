@@ -1,3 +1,5 @@
+//! Tauri command handlers: folder scanning, duplicate action execution, and report export.
+
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -111,7 +113,9 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
         return Err(format!("Eval folder does not exist: {}", eval_dir.display()));
     }
 
-    // Move ALL blocking work off the async runtime
+    // Tauri async commands run on Tokio. Blocking I/O (hashing, SQLite) would
+    // starve the runtime, so we spawn a dedicated OS thread and bridge back
+    // via a oneshot channel.
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     std::thread::spawn(move || {
@@ -165,7 +169,8 @@ fn scan_folders_blocking(
     let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm);
     let _ = reporter.join();
 
-    // Sort eval results by path for deterministic intra-eval duplicate detection
+    // Sort by path so intra-eval duplicate detection is deterministic: when two
+    // eval files share a hash, the lexicographically-first path is kept as "unique."
     let mut eval_hashed = eval_result.hashed;
     eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
 
@@ -203,6 +208,8 @@ fn scan_folders_blocking(
             uniques.push(eval_file);
         }
 
+        // Only track non-ref hashes for intra-eval detection. If a hash matches
+        // reference, every eval copy is a ref-dupe regardless of how many exist.
         if !is_ref_dupe {
             seen_eval_hashes.insert(ef.hash.clone());
         }
@@ -261,6 +268,8 @@ pub async fn execute_action(
     })
 }
 
+/// RFC 4180 CSV field quoting: wraps in double-quotes when the field
+/// contains commas, quotes, or newlines.
 pub(crate) fn csv_quote(field: &str) -> String {
     if field.contains(',') || field.contains('"') || field.contains('\n') {
         format!("\"{}\"", field.replace('"', "\"\""))

@@ -1,3 +1,5 @@
+//! File discovery, hashing (SHA-256 / xxHash), and cache-aware parallel hashing pipeline.
+
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -52,6 +54,8 @@ pub fn resolve_extensions(categories: &[String], all_files: bool) -> Option<Hash
     Some(set)
 }
 
+/// Used with `filter_entry` which prunes entire subtrees — hidden
+/// directories like .git are never descended into.
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
     entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
 }
@@ -157,7 +161,11 @@ struct FileMeta {
     mtime_nanos: u32,
 }
 
-/// Check cache serially (fast), hash misses in parallel, update cache serially.
+/// Check cache serially, hash misses in parallel, update cache serially.
+///
+/// Cache access is serial because `HashCache` wraps a SQLite connection
+/// which is not `Sync`. The expensive part (file I/O + hashing) runs in
+/// parallel via Rayon.
 pub fn hash_files_cached(
     files: &[PathBuf],
     cache: &HashCache,

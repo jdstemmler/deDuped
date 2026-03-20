@@ -1,3 +1,5 @@
+//! Application entry point. Registers Tauri plugins and exposes commands to the frontend.
+
 mod cache;
 mod commands;
 mod fileops;

@@ -1,3 +1,5 @@
+//! Unit and integration tests for the core deduplication pipeline.
+
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;

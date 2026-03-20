@@ -1,3 +1,5 @@
+//! File operations: move, trash, sidecar handling, collision resolution, and empty-dir cleanup.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -55,7 +57,8 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
     let sidecars = find_sidecars(file_path);
 
     fs::rename(file_path, &final_target).or_else(|_| -> Result<(), String> {
-        // rename fails across filesystems -- fall back to copy + delete
+        // fs::rename fails across filesystem boundaries. Fall back to copy + delete,
+        // which is not atomic: if interrupted after copy, the file exists in both locations.
         fs::copy(file_path, &final_target)
             .map_err(|e| format!("Failed to copy to {}: {e}", final_target.display()))?;
         fs::remove_file(file_path)
@@ -63,7 +66,8 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
         Ok(())
     })?;
 
-    // Move sidecars alongside the main file (best-effort)
+    // Best-effort: sidecar failures are silently ignored because losing an
+    // .xmp is far less harmful than aborting the primary file operation.
     for sidecar in sidecars {
         if !sidecar.exists() {
             continue;
@@ -147,7 +151,8 @@ fn cleanup_empty_dirs_recursive(
             .filter_map(|e| e.ok())
             .collect();
 
-        // Only remove if truly empty (ignore .DS_Store)
+        // Treat .DS_Store as junk — macOS creates these automatically and they
+        // shouldn't prevent an otherwise-empty directory from being cleaned up.
         let non_junk: Vec<_> = still_entries
             .iter()
             .filter(|e| {

@@ -1,3 +1,5 @@
+//! SQLite-backed hash cache. Avoids re-hashing files whose size and mtime haven't changed.
+
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
@@ -51,7 +53,9 @@ impl HashCache {
             );"
         ).map_err(|e| format!("Failed to create cache table: {e}"))?;
 
-        // Migration for legacy databases: add algorithm column and recreate with composite PK
+        // Migration for legacy databases that lack the `algorithm` column.
+        // SQLite doesn't support ALTER PRIMARY KEY, so we recreate the table
+        // with the composite PK (path, algorithm) and copy data over.
         let has_algorithm: bool = conn
             .prepare("PRAGMA table_info(file_hashes)")
             .map_err(|e| format!("Failed to read table info: {e}"))?
@@ -89,6 +93,9 @@ impl HashCache {
     }
 
     /// Returns `Some(hash)` if the file hasn't changed since it was cached.
+    ///
+    /// Staleness check uses (size, mtime). This won't detect edits that
+    /// preserve both (e.g. `touch -r`), but it's correct for normal use.
     pub fn get(&self, path: &str, size: u64, mtime_secs: i64, mtime_nanos: u32, algorithm: &str) -> Option<String> {
         self.conn
             .query_row(
