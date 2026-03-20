@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::cache::{CachedFile, HashCache};
-use crate::commands::{self, EvalFile, ScanResult};
+use crate::commands::{self, EvalFile, ScanResult, ScanStats};
 use crate::fileops;
 use crate::hasher;
 
@@ -957,6 +957,18 @@ fn integration_csv_export() {
             },
         ],
         skipped: 0,
+        stats: ScanStats {
+            ref_collect_ms: 0,
+            ref_hash_ms: 0,
+            eval_collect_ms: 0,
+            eval_hash_ms: 0,
+            total_ms: 0,
+            ref_cache_hits: 0,
+            eval_cache_hits: 0,
+            ref_file_count: 0,
+            eval_file_count: 4,
+            total_bytes: 0,
+        },
     };
 
     // Write CSV using the same logic as export_report

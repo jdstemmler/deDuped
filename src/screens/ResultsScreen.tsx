@@ -16,6 +16,15 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function formatTime(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const secs = ms / 1000;
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = Math.round(secs % 60);
+  return `${mins}m ${remSecs}s`;
+}
+
 export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const isReview = config.dupe_mode.type === "ReviewFirst";
   const [reviewAction, setReviewAction] = useState<"trash" | "move" | "nothing">("trash");
@@ -27,6 +36,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [exportSuccess, setExportSuccess] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Selective file actions: track which duplicate files are selected
@@ -344,7 +354,56 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             </div>
           )}
 
-          <button className="btn-link" onClick={onNewScan}>← New Scan</button>
+          <div className="stats-section">
+            <button className="stats-toggle" onClick={() => setStatsOpen(!statsOpen)}>
+              Scan stats {statsOpen ? "\u25BE" : "\u25B8"}
+            </button>
+            {statsOpen && (() => {
+              const s = result.stats;
+              const totalFiles = s.ref_file_count + s.eval_file_count;
+              const totalCacheHits = s.ref_cache_hits + s.eval_cache_hits;
+              const cacheRate = totalFiles > 0 ? ((totalCacheHits / totalFiles) * 100).toFixed(1) : "0.0";
+              const throughputMBs = s.total_ms > 0
+                ? ((s.total_bytes / (1024 * 1024)) / (s.total_ms / 1000)).toFixed(1)
+                : "0.0";
+              return (
+                <div className="stats-panel">
+                  <div className="stats-row">
+                    <span className="stats-label">Total time</span>
+                    <span className="stats-value">{formatTime(s.total_ms)}</span>
+                  </div>
+                  <div className="stats-row">
+                    <span className="stats-label">Reference</span>
+                    <span className="stats-value">
+                      {s.ref_file_count.toLocaleString()} files ({formatTime(s.ref_collect_ms)}),{" "}
+                      {s.ref_cache_hits.toLocaleString()} cache hits ({formatTime(s.ref_hash_ms)})
+                    </span>
+                  </div>
+                  <div className="stats-row">
+                    <span className="stats-label">Eval</span>
+                    <span className="stats-value">
+                      {s.eval_file_count.toLocaleString()} files ({formatTime(s.eval_collect_ms)}),{" "}
+                      {s.eval_cache_hits.toLocaleString()} cache hits ({formatTime(s.eval_hash_ms)})
+                    </span>
+                  </div>
+                  <div className="stats-row">
+                    <span className="stats-label">Throughput</span>
+                    <span className="stats-value">{throughputMBs} MB/s</span>
+                  </div>
+                  <div className="stats-row">
+                    <span className="stats-label">Cache hit rate</span>
+                    <span className="stats-value">{cacheRate}%</span>
+                  </div>
+                  <div className="stats-row">
+                    <span className="stats-label">Total data</span>
+                    <span className="stats-value">{formatSize(s.total_bytes)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          <button className="btn-link" onClick={onNewScan}>&larr; New Scan</button>
         </div>
       </div>
     </div>
