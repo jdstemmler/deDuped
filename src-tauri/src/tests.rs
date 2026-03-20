@@ -1187,3 +1187,68 @@ fn cache_perceptual_hash_high_bit_roundtrip() {
     let hit = cache.get("/high.jpg", 500, 300, 0, "sha256").unwrap();
     assert_eq!(hit.perceptual_hash, Some(high_val));
 }
+
+// ---------------------------------------------------------------------------
+// hash_files_cached: populates perceptual hash for supported images
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_files_cached_computes_perceptual_hash_for_png() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let txt_path = root.join("notes.txt");
+    fs::write(&txt_path, b"hello").unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+    let progress = Arc::new(AtomicUsize::new(0));
+
+    let result = hasher::hash_files_cached(
+        &[png_path.clone(), txt_path.clone()],
+        &cache,
+        progress,
+        "sha256",
+    );
+
+    assert_eq!(result.hashed.len(), 2);
+    let png_file = result.hashed.iter().find(|f| f.path.ends_with("gradient.png")).unwrap();
+    let txt_file = result.hashed.iter().find(|f| f.path.ends_with("notes.txt")).unwrap();
+
+    assert!(png_file.perceptual_hash.is_some());
+    assert!(txt_file.perceptual_hash.is_none());
+}
+
+#[test]
+fn hash_files_cached_perceptual_hash_from_cache() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result1 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+    let hash1 = result1.hashed[0].perceptual_hash;
+    assert!(hash1.is_some());
+    assert_eq!(result1.cache_hits, 0);
+
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result2 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+    assert_eq!(result2.cache_hits, 1);
+    assert_eq!(result2.hashed[0].perceptual_hash, hash1);
+}

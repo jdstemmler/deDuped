@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache::{CachedFile, HashCache};
+use crate::perceptual;
 
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp", "heic", "heif",
@@ -30,6 +31,16 @@ pub const DOCUMENT_EXTENSIONS: &[&str] = &[
 pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "aac", "wav", "aiff", "ogg", "m4a", "wma", "alac",
 ];
+
+/// Extensions that support perceptual hashing (image crate can decode these).
+const PERCEPTUAL_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp"];
+
+fn supports_perceptual_hash(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| PERCEPTUAL_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
 
 /// Resolve category names into an optional set of allowed extensions.
 /// Returns `None` if `all_files` is true (accept everything).
@@ -161,6 +172,7 @@ pub struct HashedFile {
     pub path: String,
     pub hash: String,
     pub size: u64,
+    pub perceptual_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -216,7 +228,12 @@ pub fn hash_files_cached(
         if let Some(hit) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
             cache_hits += 1;
-            results.push(HashedFile { path: path_str, hash: hit.hash, size });
+            results.push(HashedFile {
+                path: path_str,
+                hash: hit.hash,
+                size,
+                perceptual_hash: hit.perceptual_hash,
+            });
         } else {
             needs_hashing.push(FileMeta {
                 path: path.clone(),
@@ -231,13 +248,18 @@ pub fn hash_files_cached(
     // Hash cache misses in parallel
     let algo = algorithm.to_string();
     let progress_clone = progress.clone();
-    let newly_hashed: Vec<Result<(FileMeta, String), SkippedFile>> = needs_hashing
+    let newly_hashed: Vec<Result<(FileMeta, String, Option<u64>), SkippedFile>> = needs_hashing
         .into_par_iter()
         .map(|fm| {
             match hash_file(&fm.path, &algo) {
                 Ok(hash) => {
+                    let phash = if supports_perceptual_hash(&fm.path) {
+                        perceptual::compute_dhash(&fm.path)
+                    } else {
+                        None
+                    };
                     progress_clone.fetch_add(1, Ordering::Relaxed);
-                    Ok((fm, hash))
+                    Ok((fm, hash, phash))
                 }
                 Err(reason) => {
                     progress_clone.fetch_add(1, Ordering::Relaxed);
@@ -251,7 +273,7 @@ pub fn hash_files_cached(
     // Update cache and collect results (serial)
     for item in newly_hashed {
         match item {
-            Ok((fm, hash)) => {
+            Ok((fm, hash, phash)) => {
                 let _ = cache.set(&CachedFile {
                     path: fm.path_str.clone(),
                     hash: hash.clone(),
@@ -259,12 +281,13 @@ pub fn hash_files_cached(
                     mtime_secs: fm.mtime_secs,
                     mtime_nanos: fm.mtime_nanos,
                     algorithm: algorithm.to_string(),
-                    perceptual_hash: None,
+                    perceptual_hash: phash.map(|v| v as i64),
                 });
                 results.push(HashedFile {
                     path: fm.path_str,
                     hash,
                     size: fm.size,
+                    perceptual_hash: phash,
                 });
             }
             Err(sf) => skipped.push(sf),
