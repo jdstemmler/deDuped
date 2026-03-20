@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile } from "../types";
+import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile, FilePreview } from "../types";
 
 interface Props {
   config: ScanConfig;
@@ -39,6 +39,11 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [statsOpen, setStatsOpen] = useState(false);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // File preview state
+  const [selectedPreview, setSelectedPreview] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<FilePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   // Selective file actions: track which duplicate files are selected
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
     () => new Set(result.duplicates.map((f) => f.path))
@@ -63,6 +68,25 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
       setSelectedFiles(new Set());
     } else {
       setSelectedFiles(new Set(allDupePaths));
+    }
+  };
+
+  const handleFileClick = async (path: string) => {
+    if (selectedPreview === path) {
+      setSelectedPreview(null);
+      setPreviewData(null);
+      return;
+    }
+    setSelectedPreview(path);
+    setPreviewData(null);
+    setPreviewLoading(true);
+    try {
+      const data = await invoke<FilePreview>("get_file_preview", { path });
+      setPreviewData(data);
+    } catch {
+      setPreviewData(null);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -215,6 +239,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                 "file-row",
                 isDupe && isSelected ? "selected-dupe" : "",
                 isDupe && !isSelected ? "deselected" : "",
+                selectedPreview === file.path ? "preview-active" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -232,7 +257,13 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                     <span style={{ width: 14, flexShrink: 0 }} />
                   )}
                   <span className={`status-dot ${isDupe ? "dot-dupe" : "dot-unique"}`} />
-                  <span className="file-path">{file.relative_path}</span>
+                  <span
+                    className="file-path"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => handleFileClick(file.path)}
+                  >
+                    {file.relative_path}
+                  </span>
                   <span className="file-size">{formatSize(file.size)}</span>
                   <span className={`tag ${isDupe ? "tag-dupe" : "tag-unique"}`}>
                     {isDupe ? "Duplicate" : "Unique"}
@@ -281,6 +312,43 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             <div className="error-list">
               <h4>Action Failed</h4>
               <div className="error-item">{actionError}</div>
+            </div>
+          )}
+
+          {/* File Preview Panel */}
+          {selectedPreview && (
+            <div className="preview-panel">
+              <button
+                className="preview-close"
+                onClick={() => { setSelectedPreview(null); setPreviewData(null); }}
+              >
+                &times;
+              </button>
+              {previewLoading ? (
+                <div className="preview-info">Loading...</div>
+              ) : previewData ? (
+                <>
+                  {previewData.thumbnail_data ? (
+                    <img
+                      className="preview-thumbnail"
+                      src={previewData.thumbnail_data}
+                      alt="Preview"
+                    />
+                  ) : (
+                    <div className="preview-placeholder">
+                      Preview not available for this file type
+                    </div>
+                  )}
+                  <div className="preview-info">
+                    <div>{previewData.path.split("/").pop()}</div>
+                    <div className="preview-detail">{previewData.path}</div>
+                    <div className="preview-detail">{formatSize(previewData.size)}</div>
+                    <div className="preview-detail">{previewData.mime_type}</div>
+                  </div>
+                </>
+              ) : (
+                <div className="preview-info">Failed to load preview</div>
+              )}
             </div>
           )}
 

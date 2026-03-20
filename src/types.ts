@@ -61,3 +61,11 @@ export interface ActionResult {
   errors: string[];
   dirs_cleaned: number;
 }
+
+export interface FilePreview {
+  path: string;
+  size: number;
+  mime_type: string;
+  is_image: boolean;
+  thumbnail_data: string | null;
+}

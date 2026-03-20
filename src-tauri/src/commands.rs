@@ -1,8 +1,9 @@
 //! Tauri command handlers: folder scanning, duplicate action execution, and report export.
 
+use base64::Engine as _;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -386,4 +387,99 @@ pub async fn export_report(
         }
         _ => Err(format!("Unsupported format: {format}. Use \"csv\" or \"json\".")),
     }
+}
+
+// ── File Preview ────────────────────────────────────────
+
+/// Maximum file size (5 MB) for which we'll generate a thumbnail.
+const MAX_THUMBNAIL_BYTES: u64 = 5 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilePreview {
+    pub path: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub is_image: bool,
+    pub thumbnail_data: Option<String>,
+}
+
+/// Infer a MIME type from the file extension. Falls back to
+/// "application/octet-stream" for unknown extensions.
+fn mime_from_extension(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "heic" | "heif" => "image/heic",
+        "avif" => "image/avif",
+        // RAW formats
+        "nef" => "image/x-nikon-nef",
+        "cr2" => "image/x-canon-cr2",
+        "cr3" => "image/x-canon-cr3",
+        "arw" => "image/x-sony-arw",
+        "orf" => "image/x-olympus-orf",
+        "raf" => "image/x-fuji-raf",
+        "dng" => "image/x-adobe-dng",
+        "rw2" => "image/x-panasonic-rw2",
+        // Video
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mkv" => "video/x-matroska",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Whether the extension is one we can turn into a base64 thumbnail
+/// (formats browsers can display natively in an <img> tag).
+fn can_thumbnail(ext: &str) -> bool {
+    matches!(ext, "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tif" | "tiff")
+}
+
+#[tauri::command]
+pub async fn get_file_preview(path: String) -> Result<FilePreview, String> {
+    let file_path = PathBuf::from(&path);
+    if !file_path.exists() {
+        return Err(format!("File not found: {path}"));
+    }
+
+    let metadata = fs::metadata(&file_path)
+        .map_err(|e| format!("Failed to read metadata: {e}"))?;
+    let size = metadata.len();
+
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mime_type = mime_from_extension(&ext).to_string();
+    let is_image = mime_type.starts_with("image/");
+
+    let thumbnail_data = if can_thumbnail(&ext) && size <= MAX_THUMBNAIL_BYTES {
+        let mut file = fs::File::open(&file_path)
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+        let mut buf = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut buf)
+            .map_err(|e| format!("Failed to read file: {e}"))?;
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+        let data_uri = format!("data:{};base64,{}", mime_type, b64);
+        Some(data_uri)
+    } else {
+        None
+    };
+
+    Ok(FilePreview {
+        path,
+        size,
+        mime_type,
+        is_image,
+        thumbnail_data,
+    })
 }

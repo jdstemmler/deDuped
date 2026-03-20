@@ -1046,3 +1046,70 @@ body {
   color: var(--text-secondary);
   filter: brightness(1.15);
 }
+
+/* ── File Preview Panel ──────────────────────────────── */
+.preview-panel {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.preview-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.preview-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.preview-thumbnail {
+  max-width: 100%;
+  border-radius: 6px;
+  display: block;
+  margin: 0 auto 12px;
+}
+
+.preview-info {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.preview-info .preview-detail {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.preview-placeholder {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 20px 0;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.file-row.preview-active {
+  background: var(--accent-blue-dim);
+  border-left: 3px solid var(--accent-blue);
+  padding-left: 13px;
+}
