@@ -228,11 +228,34 @@ pub fn hash_files_cached(
         if let Some(hit) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
             cache_hits += 1;
+
+            // Backfill: if the cache entry predates perceptual hashing,
+            // compute and store the dHash now.
+            let phash = match hit.perceptual_hash {
+                Some(ph) => Some(ph),
+                None if supports_perceptual_hash(path) => {
+                    let ph = perceptual::compute_dhash(path);
+                    if ph.is_some() {
+                        let _ = cache.set(&CachedFile {
+                            path: path_str.clone(),
+                            hash: hit.hash.clone(),
+                            size,
+                            mtime_secs,
+                            mtime_nanos,
+                            algorithm: algorithm.to_string(),
+                            perceptual_hash: ph.map(|v| v as i64),
+                        });
+                    }
+                    ph
+                }
+                None => None,
+            };
+
             results.push(HashedFile {
                 path: path_str,
                 hash: hit.hash,
                 size,
-                perceptual_hash: hit.perceptual_hash,
+                perceptual_hash: phash,
             });
         } else {
             needs_hashing.push(FileMeta {

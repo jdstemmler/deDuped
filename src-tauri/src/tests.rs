@@ -1347,3 +1347,55 @@ fn integration_perceptual_matching_finds_similar_images() {
 
     assert!(min_dist <= 10, "Should be within Moderate threshold, got {min_dist}");
 }
+
+// ---------------------------------------------------------------------------
+// Backfill: legacy cache entries without perceptual hash get backfilled
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_files_cached_backfills_perceptual_hash_on_legacy_cache_hit() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    // Create a PNG image
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+
+    // Simulate a legacy cache entry: content hash present, no perceptual hash
+    let path_str = png_path.to_string_lossy().to_string();
+    let meta = fs::metadata(&png_path).unwrap();
+    let mtime = meta.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    cache.set(&CachedFile {
+        path: path_str.clone(),
+        hash: "legacy_hash_abc".to_string(),
+        size: meta.len(),
+        mtime_secs: mtime.as_secs() as i64,
+        mtime_nanos: mtime.subsec_nanos(),
+        algorithm: "sha256".to_string(),
+        perceptual_hash: None,  // <-- legacy: no perceptual hash
+    }).unwrap();
+
+    // Verify cache hit returns None for perceptual hash
+    let hit = cache.get(&path_str, meta.len(), mtime.as_secs() as i64, mtime.subsec_nanos(), "sha256").unwrap();
+    assert_eq!(hit.perceptual_hash, None);
+
+    // Run hash_files_cached — should be a cache hit but backfill the perceptual hash
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+
+    assert_eq!(result.cache_hits, 1, "Should be a cache hit");
+    assert_eq!(result.hashed[0].hash, "legacy_hash_abc", "Content hash from cache");
+    assert!(result.hashed[0].perceptual_hash.is_some(), "Perceptual hash should be backfilled");
+
+    // Verify the cache was updated with the perceptual hash
+    let hit2 = cache.get(&path_str, meta.len(), mtime.as_secs() as i64, mtime.subsec_nanos(), "sha256").unwrap();
+    assert!(hit2.perceptual_hash.is_some(), "Cache should now have the perceptual hash");
+    assert_eq!(hit2.perceptual_hash, result.hashed[0].perceptual_hash);
+}
