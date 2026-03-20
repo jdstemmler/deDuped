@@ -1,24 +1,30 @@
 # deDuped
 
-A macOS desktop app for **one-way photo deduplication**. Point it at your photo library (reference) and a pile of unsorted files (eval) — it hashes everything, finds duplicates, and lets you trash or move them. The reference folder is never modified.
+A macOS desktop app for **one-way file deduplication**. Point it at your existing library (reference) and a pile of unsorted files (eval) — it hashes everything, finds duplicates, and lets you trash or move them. The reference folder is never modified.
 
 ## Why this exists
 
-Every dedup tool does two-way dedup. That's dangerous when you have a 60k+ file library and incoming files — you don't want to accidentally flag library copies for deletion. deDuped's core differentiator is the **one-directional model**: reference is read-only, only eval files get acted on.
+Every dedup tool does two-way dedup: "find duplicates across these folders." That's dangerous when you have a 60k+ file library and incoming files — you don't want to accidentally flag library copies for deletion.
 
-## Tech stack
+deDuped's core differentiator is the **one-directional model**: the reference folder is read-only, period. Only eval files get acted on.
 
-- **Backend**: Rust (Tauri 2)
-  - Parallel SHA-256 hashing via `rayon`
-  - SQLite hash cache — skip rehashing unchanged files across runs
-  - Safe file operations — macOS Trash via `trash` crate, move with structure preservation
-  - XMP sidecar handling — sidecars follow their parent file
-- **Frontend**: React + TypeScript (Vite)
-  - Setup screen with folder pickers and config options
-  - Real-time scanning progress via Tauri events
-  - Results view with action panel
+## Features
 
-## Getting started
+- **One-way dedup** — reference folder is never touched
+- **Parallel hashing** — SHA-256 or xxHash (xxh3), parallelized with rayon
+- **Hash cache** — SQLite-backed; unchanged files aren't rehashed between runs
+- **File type categories** — scan Images, Videos, Documents, Audio, or all files
+- **Three duplicate modes** — move to trash, move to folder, or review first
+- **Sidecar handling** — XMP files automatically follow their parent photo
+- **Structure preservation** — moved files keep their subfolder hierarchy
+- **Collision handling** — filename conflicts resolved with `-1`, `-2` suffixes
+- **Drag-and-drop** — drag folders from Finder onto the picker areas
+- **Session persistence** — remembers your last-used folders and settings
+- **Export reports** — save scan results as CSV or JSON
+- **Intra-eval detection** — catches duplicates within the eval folder itself
+- **Empty dir cleanup** — removes empty directories after file operations
+
+## Quick start
 
 ### Prerequisites
 
@@ -29,57 +35,151 @@ Every dedup tool does two-way dedup. That's dangerous when you have a 60k+ file 
 ### Development
 
 ```bash
-# Install frontend dependencies
 npm install
-
-# Run in dev mode (hot-reloading frontend + Rust backend)
 cargo tauri dev
 ```
 
 ### Build
 
 ```bash
-# Production build — outputs .app and .dmg
 cargo tauri build
 ```
 
-The built app is at `src-tauri/target/release/bundle/macos/deDuped.app`.
+The `.app` bundle is at `src-tauri/target/release/bundle/macos/deDuped.app`. Copy it to `/Applications` or another Mac via AirDrop. Right-click → Open on first launch to bypass the unsigned app warning.
+
+### Tests
+
+```bash
+cd src-tauri
+cargo test
+```
+
+41 tests: unit tests for hashing, caching, file operations, and sidecar detection, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
 
 ## Usage
 
-1. **Select folders** — pick your reference (photo library) and eval (incoming files) folders
-2. **Configure** — choose how to handle duplicates:
-   - **Move to trash** (default) — recoverable via macOS Trash
-   - **Move to folder** — relocate dupes to a specific directory, preserving subfolder structure
-   - **Review first** — scan only, decide after seeing results
-3. **Scan** — the app hashes both folders and identifies duplicates
-4. **Act** — confirm the action on the results screen
+### 1. Select folders
 
-Optionally toggle "move unique files" to sort non-duplicates into a separate folder.
+Pick your **reference** folder (existing library — never modified) and **eval** folder (incoming files to check). Click the picker areas or drag folders from Finder.
+
+### 2. Configure scan
+
+**File types** — select which categories to include: Images (default), Videos, Documents, Audio, or All Files.
+
+**Hash algorithm** — SHA-256 (default, cryptographic) or xxHash (faster, non-cryptographic). Switching algorithms triggers a full re-hash since cached hashes are algorithm-specific.
+
+**Duplicate handling:**
+- **Move to trash** — sends duplicates to macOS Trash (recoverable)
+- **Move to folder** — relocates duplicates to a chosen directory, preserving subfolder structure
+- **Review first** — scan only, decide what to do after seeing results
+
+**Non-duplicate handling** — optionally move unique files to a separate folder (off by default).
+
+### 3. Scan
+
+The app walks both directories, hashes all matching files (using cached hashes where possible), and compares eval files against the reference set. Progress is shown in real-time.
+
+### 4. Results
+
+A summary shows total files scanned, duplicates found, and unique files. The file list shows each eval file with its status. From here you can:
+
+- Execute the chosen action (trash or move duplicates)
+- Export results as CSV or JSON
+- Go back and start a new scan
 
 ## How it works
 
-- Files are hashed with SHA-256 for content-based comparison
-- A SQLite cache (`~/Library/Application Support/com.photodedup/cache.db`) stores hashes keyed by path + size + mtime — unchanged files aren't rehashed
-- Supported file types: common photo formats (JPEG, PNG, HEIC, RAW variants), video (MP4, MOV, AVI, MKV)
-- Hidden files, `.DS_Store`, and non-media files are skipped
-- Intra-eval duplicates are detected (if eval contains two identical files, only one is kept)
-- XMP sidecar files (`.xmp`) are automatically moved/trashed alongside their parent photo
-- Empty directories in the eval folder are cleaned up after file operations
+### Hashing
+
+Files are compared by content hash, not filename. Two files with different names but identical bytes are duplicates. Two files with the same name but different content are not.
+
+deDuped offers two algorithms:
+
+| Algorithm | Speed | Use case |
+|-----------|-------|----------|
+| SHA-256 | ~200 MB/s | Default. Cryptographic-strength collision resistance. |
+| xxHash (xxh3) | ~5 GB/s | When speed matters more than theoretical collision resistance. Fine for photo dedup. |
+
+Hashing is parallelized across CPU cores using rayon. A 128 KB read buffer is used for throughput on large files (RAW photos, videos).
+
+### Cache
+
+A SQLite database at `~/Library/Application Support/com.photodedup/cache.db` stores hashes keyed by `(path, algorithm, size, mtime)`. If a file hasn't changed since the last scan, its cached hash is reused. This makes repeat scans of large libraries near-instant.
+
+The cache is pruned on each run — entries for deleted files are removed automatically.
+
+### Duplicate detection
+
+1. Hash all reference files → build a set of known hashes
+2. Hash all eval files → compare each against the reference set
+3. Detect intra-eval duplicates — if the eval folder itself contains identical files, only the first (by path sort order) is kept as "unique"
+
+Eval results are sorted by path before comparison, so duplicate detection is deterministic regardless of cache state.
+
+### File operations
+
+**Safety guarantees:**
+- Files are **never permanently deleted**. "Delete" always means macOS Trash (recoverable).
+- The **reference folder is never modified** — no reads, no writes, no deletes.
+- **Move** uses `rename` when possible (atomic, same filesystem). Falls back to copy-then-delete for cross-filesystem moves. If copy succeeds but delete fails, the error is reported — the file exists in both locations rather than being lost.
+- **Sidecars** (`.xmp` files) are automatically moved or trashed alongside their parent photo. Sidecar handling is best-effort — a sidecar failure never blocks the primary file operation.
+- **Collisions** at the destination are resolved by appending `-1`, `-2`, etc. before the file extension. Files are never silently overwritten.
+- **Empty directories** in the eval folder are cleaned up bottom-up after all operations complete.
+
+### File type categories
+
+| Category | Extensions |
+|----------|-----------|
+| Images | jpg, jpeg, png, tif, tiff, bmp, webp, heic, heif, cr2, cr3, nef, arw, orf, rw2, dng, raf, pef, srw, x3f |
+| Videos | mp4, mov, avi, mkv, m4v, wmv, flv, webm, mts, m2ts |
+| Documents | pdf, doc, docx, xls, xlsx, ppt, pptx, txt, rtf, md, csv, psd, ai, indd, sketch, fig |
+| Audio | mp3, flac, aac, wav, aiff, ogg, m4a, wma, alac |
+| All Files | Everything except hidden files and `.DS_Store` |
+
+Multiple categories can be selected simultaneously.
 
 ## Project structure
 
 ```
-src/                    # React frontend
-  screens/              # Setup, Scanning, Results screens
-  types.ts              # Shared TypeScript types
-  styles.css            # Design tokens and component styles
-src-tauri/
+src/                        # React + TypeScript frontend
+  App.tsx                   # Screen routing and state
+  main.tsx                  # Entry point
+  types.ts                  # Shared type definitions
+  styles.css                # All styles
+  screens/
+    SetupScreen.tsx         # Folder pickers, categories, config
+    ScanningScreen.tsx      # Progress bar with real-time events
+    ResultsScreen.tsx       # Summary, file list, actions, export
+
+src-tauri/                  # Rust backend
   src/
-    cache.rs            # SQLite hash cache
-    hasher.rs           # File collection + parallel SHA-256 hashing
-    fileops.rs          # Trash, move, sidecar handling, dir cleanup
-    commands.rs         # Tauri commands (scan_folders, execute_action)
-    lib.rs / main.rs    # App entry points
-  tauri.conf.json       # Tauri app configuration
+    hasher.rs               # File collection, SHA-256/xxHash, parallel hashing
+    cache.rs                # SQLite hash cache with algorithm-aware keys
+    fileops.rs              # Trash, move, sidecar handling, dir cleanup
+    commands.rs             # Tauri commands: scan_folders, execute_action, export_report
+    tests.rs                # 41 unit + integration tests
+    lib.rs                  # Plugin registration and command handler
+    main.rs                 # Binary entry point
+  tauri.conf.json           # App config (window size, permissions, build)
+  capabilities/default.json # Tauri security permissions
+  Cargo.toml                # Rust dependencies
 ```
+
+## Tech stack
+
+| Component | Technology |
+|-----------|-----------|
+| App framework | [Tauri 2](https://tauri.app/) |
+| Backend language | Rust |
+| Frontend | React 19 + TypeScript |
+| Build tool | Vite |
+| Hashing | `sha2` (SHA-256), `xxhash-rust` (xxh3) |
+| Parallelism | `rayon` |
+| Cache | `rusqlite` (SQLite, bundled) |
+| File traversal | `walkdir` |
+| Trash | `trash` crate (macOS native) |
+| Dialogs | `tauri-plugin-dialog` (NSOpenPanel / NSSavePanel) |
+
+## License
+
+This project is unlicensed. All rights reserved.
