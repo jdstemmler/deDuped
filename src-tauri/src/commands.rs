@@ -143,6 +143,12 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     if !eval_dir.is_dir() {
         return Err(format!("Eval folder does not exist: {}", eval_dir.display()));
     }
+    if ref_dir == eval_dir {
+        return Err("Reference and eval folders must be different".to_string());
+    }
+    if ref_dir.starts_with(&eval_dir) || eval_dir.starts_with(&ref_dir) {
+        return Err("Reference and eval folders cannot be nested inside each other".to_string());
+    }
 
     // Tauri async commands run on Tokio. Blocking I/O (hashing, SQLite) would
     // starve the runtime, so we spawn a dedicated OS thread and bridge back
@@ -459,8 +465,9 @@ pub async fn execute_action(
             eval_dir: eval_dir.clone(),
         };
 
-        if let Ok(log) = ActionLog::default() {
-            let _ = log.append(batch);
+        let log_result = ActionLog::default().and_then(|log| log.append(batch));
+        if let Err(e) = log_result {
+            errors.push(format!("Warning: failed to record action for undo: {e}"));
         }
     }
 
