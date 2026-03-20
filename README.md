@@ -65,7 +65,7 @@ cd src-tauri
 cargo test
 ```
 
-61 tests: unit tests for hashing, caching, perceptual hashing, and file operations, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
+72 tests: unit tests for hashing, caching, perceptual hashing, file operations, and CSV quoting, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, extension customization, and CSV export.
 
 ## Usage
 
@@ -189,7 +189,7 @@ src-tauri/                  # Rust backend
     cache.rs                # SQLite hash cache with algorithm-aware keys
     fileops.rs              # Trash, move, sidecar handling, dir cleanup
     commands.rs             # Tauri commands: scan_folders, execute_action, export_report
-    tests.rs                # 61 unit + integration tests
+    tests.rs                # 72 unit + integration tests
     lib.rs                  # Plugin registration and command handler
     main.rs                 # Binary entry point
   tauri.conf.json           # App config (window size, permissions, build)
