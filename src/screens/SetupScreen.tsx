@@ -543,11 +543,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             )}
           </div>
         </div>
-      </div>
-
-      <div className="config-section">
-        <h3>Perceptual matching</h3>
-        <div className="toggle-inline">
+        <div className="perceptual-row">
           <label className="toggle">
             <input
               type="checkbox"
@@ -557,47 +553,41 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             />
             <span className="toggle-slider" />
           </label>
-          <span className={!hasImageCategory ? "disabled" : ""}>
-            Find visually similar images (not just byte-identical)
+          <span className={`hash-label ${!hasImageCategory ? "disabled" : ""}`}>
+            Similar image detection
           </span>
+          {perceptualMatching && hasImageCategory && (
+            <>
+              <div className="hash-pills">
+                <button
+                  className={`hash-pill ${perceptualThreshold === 5 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(5)}
+                >
+                  Strict
+                </button>
+                <button
+                  className={`hash-pill ${perceptualThreshold === 10 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(10)}
+                >
+                  Moderate
+                </button>
+                <button
+                  className={`hash-pill ${perceptualThreshold === 15 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(15)}
+                >
+                  Loose
+                </button>
+              </div>
+              <span className="hash-hint">
+                {perceptualThreshold === 5
+                  ? "Metadata changes, recompression"
+                  : perceptualThreshold === 10
+                    ? "Quality differences, minor crops"
+                    : "Significant changes \u2014 review carefully"}
+              </span>
+            </>
+          )}
         </div>
-        {!hasImageCategory && (
-          <div className="category-warning">
-            Requires an image category to be selected
-          </div>
-        )}
-        {perceptualMatching && hasImageCategory && (
-          <div className="threshold-presets">
-            <span className="hash-label">Sensitivity</span>
-            <div className="hash-pills">
-              <button
-                className={`hash-pill ${perceptualThreshold === 5 ? "active" : ""}`}
-                onClick={() => setPerceptualThreshold(5)}
-              >
-                Strict
-              </button>
-              <button
-                className={`hash-pill ${perceptualThreshold === 10 ? "active" : ""}`}
-                onClick={() => setPerceptualThreshold(10)}
-              >
-                Moderate
-              </button>
-              <button
-                className={`hash-pill ${perceptualThreshold === 15 ? "active" : ""}`}
-                onClick={() => setPerceptualThreshold(15)}
-              >
-                Loose
-              </button>
-            </div>
-            <span className="hash-hint">
-              {perceptualThreshold === 5
-                ? "Metadata changes, recompression"
-                : perceptualThreshold === 10
-                  ? "Quality differences, minor crops"
-                  : "Significant changes \u2014 review carefully"}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="config-section">
