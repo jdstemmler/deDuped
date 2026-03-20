@@ -65,7 +65,7 @@ cd src-tauri
 cargo test
 ```
 
-59 tests: unit tests for hashing, caching, perceptual hashing, and file operations, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
+61 tests: unit tests for hashing, caching, perceptual hashing, and file operations, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
 
 ## Usage
 
@@ -151,7 +151,7 @@ Eval results are sorted by path before comparison, so duplicate detection is det
 
 **Safety guarantees:**
 - Files are **never permanently deleted**. "Delete" always means macOS Trash (recoverable).
-- The **reference folder is never modified** — no reads, no writes, no deletes.
+- The **reference folder is never modified** — files are read for hashing but never moved, renamed, or deleted.
 - **Move** uses `rename` when possible (atomic, same filesystem). Falls back to copy-then-delete for cross-filesystem moves. If copy succeeds but delete fails, the error is reported — the file exists in both locations rather than being lost.
 - **Sidecars** (`.xmp` files) are automatically moved or trashed alongside their parent photo. Sidecar handling is best-effort — a sidecar failure never blocks the primary file operation.
 - **Collisions** at the destination are resolved by appending `-1`, `-2`, etc. before the file extension. Files are never silently overwritten.
@@ -189,7 +189,7 @@ src-tauri/                  # Rust backend
     cache.rs                # SQLite hash cache with algorithm-aware keys
     fileops.rs              # Trash, move, sidecar handling, dir cleanup
     commands.rs             # Tauri commands: scan_folders, execute_action, export_report
-    tests.rs                # 59 unit + integration tests
+    tests.rs                # 61 unit + integration tests
     lib.rs                  # Plugin registration and command handler
     main.rs                 # Binary entry point
   tauri.conf.json           # App config (window size, permissions, build)

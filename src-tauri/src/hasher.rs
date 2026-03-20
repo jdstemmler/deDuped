@@ -1,4 +1,4 @@
-//! File discovery, hashing (SHA-256 / xxHash), and cache-aware parallel hashing pipeline.
+//! File discovery, content hashing (SHA-256 / xxHash), perceptual hashing (dHash), and cache-aware parallel hashing pipeline.
 
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -198,6 +198,8 @@ struct FileMeta {
 }
 
 /// Check cache serially, hash misses in parallel, update cache serially.
+/// Legacy cache entries without perceptual hashes are backfilled on hit
+/// for supported image formats.
 ///
 /// Cache access is serial because `HashCache` wraps a SQLite connection
 /// which is not `Sync`. The expensive part (file I/O + hashing) runs in

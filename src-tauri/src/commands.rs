@@ -1,4 +1,4 @@
-//! Tauri command handlers: folder scanning, duplicate action execution, and report export.
+//! Tauri command handlers: folder scanning, duplicate action execution, report export, file preview, action log, and undo.
 
 use base64::Engine as _;
 use std::collections::{HashMap, HashSet};
@@ -179,7 +179,9 @@ fn scan_folders_blocking(
     );
 
     let cache = HashCache::open()?;
-    let _ = cache.prune();
+    if let Err(e) = cache.prune() {
+        eprintln!("Warning: cache prune failed: {e}");
+    }
 
     // -- Reference: collect --
     emit_progress(app, "Collecting reference files...", 0, 0);
@@ -445,7 +447,13 @@ pub async fn execute_action(
 
     // Clean up empty directories in eval folder
     let dirs_cleaned = if !matches!(action, ActionMode::Nothing) {
-        fileops::cleanup_empty_dirs(&eval_path).unwrap_or(0)
+        match fileops::cleanup_empty_dirs(&eval_path) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("Warning: directory cleanup failed: {e}");
+                0
+            }
+        }
     } else {
         0
     };
@@ -598,12 +606,30 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
                     let dest_str = dest_file.to_string_lossy();
                     if let Some(root_str) = dest_str.strip_suffix(&*relative_str) {
                         let dest_root = PathBuf::from(root_str.trim_end_matches('/'));
-                        fileops::cleanup_empty_dirs(&dest_root).unwrap_or(0)
+                        match fileops::cleanup_empty_dirs(&dest_root) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Warning: directory cleanup failed: {e}");
+                                0
+                            }
+                        }
                     } else {
-                        fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                        match fileops::cleanup_empty_dirs(parent) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Warning: directory cleanup failed: {e}");
+                                0
+                            }
+                        }
                     }
                 } else {
-                    fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                    match fileops::cleanup_empty_dirs(parent) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            eprintln!("Warning: directory cleanup failed: {e}");
+                            0
+                        }
+                    }
                 }
             } else {
                 0
