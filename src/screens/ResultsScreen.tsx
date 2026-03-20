@@ -29,6 +29,33 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [executing, setExecuting] = useState(false);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Selective file actions: track which duplicate files are selected
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
+    () => new Set(result.duplicates.map((f) => f.path))
+  );
+
+  const allDupePaths = result.duplicates.map((f) => f.path);
+  const selectedCount = selectedFiles.size;
+  const totalDupes = allDupePaths.length;
+  const allSelected = selectedCount === totalDupes && totalDupes > 0;
+
+  const toggleFile = (path: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(allDupePaths));
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (exportTimerRef.current) clearTimeout(exportTimerRef.current);
@@ -65,9 +92,10 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     }
   };
 
+  const hasSelection = selectedCount > 0;
   const canAct = isReview
-    ? reviewAction !== "move" || reviewDest !== ""
-    : true;
+    ? (reviewAction === "nothing" || hasSelection) && (reviewAction !== "move" || reviewDest !== "")
+    : hasSelection;
 
   const handleAction = async (dupeFiles: EvalFile[], mode: ActionMode) => {
     if (mode.type === "Nothing") {
@@ -122,7 +150,8 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } else {
       return;
     }
-    handleAction(result.duplicates, mode);
+    const filesToAct = result.duplicates.filter((f) => selectedFiles.has(f.path));
+    handleAction(filesToAct, mode);
   };
 
   if (actionDone && actionResult) {
@@ -155,16 +184,52 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
       <div className="results-layout">
         <div className="results-files">
           <div className="file-list">
-            {[...result.duplicates, ...result.uniques].map((file) => (
-              <div key={file.path} className="file-row">
-                <span className={`status-dot ${file.is_duplicate ? "dot-dupe" : "dot-unique"}`} />
-                <span className="file-path">{file.relative_path}</span>
-                <span className="file-size">{formatSize(file.size)}</span>
-                <span className={`tag ${file.is_duplicate ? "tag-dupe" : "tag-unique"}`}>
-                  {file.is_duplicate ? "Duplicate" : "Unique"}
-                </span>
-              </div>
-            ))}
+            <div className="file-list-header">
+              <label>
+                <input
+                  type="checkbox"
+                  className="file-row-checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                />
+                Select all duplicates
+              </label>
+              <span className="selection-count">
+                {selectedCount} of {totalDupes} selected
+              </span>
+            </div>
+            {[...result.duplicates, ...result.uniques].map((file) => {
+              const isDupe = file.is_duplicate;
+              const isSelected = isDupe && selectedFiles.has(file.path);
+              const rowClass = [
+                "file-row",
+                isDupe && isSelected ? "selected-dupe" : "",
+                isDupe && !isSelected ? "deselected" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+
+              return (
+                <div key={file.path} className={rowClass}>
+                  {isDupe ? (
+                    <input
+                      type="checkbox"
+                      className="file-row-checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleFile(file.path)}
+                    />
+                  ) : (
+                    <span style={{ width: 14, flexShrink: 0 }} />
+                  )}
+                  <span className={`status-dot ${isDupe ? "dot-dupe" : "dot-unique"}`} />
+                  <span className="file-path">{file.relative_path}</span>
+                  <span className="file-size">{formatSize(file.size)}</span>
+                  <span className={`tag ${isDupe ? "tag-dupe" : "tag-unique"}`}>
+                    {isDupe ? "Duplicate" : "Unique"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -251,7 +316,13 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   disabled={!canAct || executing}
                   onClick={handleConfirmAction}
                 >
-                  {executing ? "Processing..." : reviewAction === "trash" ? "Move to Trash" : reviewAction === "move" ? "Move Files" : "Done"}
+                  {executing
+                    ? "Processing..."
+                    : reviewAction === "trash"
+                      ? `Move ${selectedCount} of ${totalDupes} to Trash`
+                      : reviewAction === "move"
+                        ? `Move ${selectedCount} of ${totalDupes} Files`
+                        : "Done"}
                 </button>
               </div>
             </div>
@@ -260,14 +331,14 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               <div className="action-buttons">
                 <button
                   className={`btn-primary ${config.dupe_mode.type === "Trash" ? "btn-danger" : ""}`}
-                  disabled={executing}
+                  disabled={!canAct || executing}
                   onClick={handleConfirmAction}
                 >
                   {executing
                     ? "Processing..."
                     : config.dupe_mode.type === "Trash"
-                      ? `Move ${result.duplicates.length} to Trash`
-                      : `Move ${result.duplicates.length} Files`}
+                      ? `Move ${selectedCount} of ${totalDupes} to Trash`
+                      : `Move ${selectedCount} of ${totalDupes} Files`}
                 </button>
               </div>
             </div>
