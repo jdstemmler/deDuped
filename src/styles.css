@@ -220,6 +220,109 @@ body {
   margin-top: 8px;
 }
 
+/* -- Extension Customizer ---------------------------------------- */
+.extension-customizer {
+  margin-top: 10px;
+}
+
+.customize-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.15s ease;
+}
+
+.customize-toggle:hover {
+  color: var(--text-primary);
+}
+
+.extension-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.extension-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-primary);
+}
+
+.extension-tag .ext-remove {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 0.15s ease;
+}
+
+.extension-tag .ext-remove:hover {
+  color: var(--accent-red);
+}
+
+.extension-tag.custom {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-dim);
+}
+
+.extension-tag.removed {
+  opacity: 0.5;
+}
+
+.extension-tag.removed .ext-text {
+  text-decoration: line-through;
+}
+
+.extension-tag .ext-undo {
+  background: none;
+  border: none;
+  color: var(--accent-green);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: opacity 0.15s ease;
+}
+
+.extension-tag .ext-undo:hover {
+  opacity: 0.7;
+}
+
+.extension-input {
+  margin-top: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-primary);
+  outline: none;
+  width: 160px;
+  transition: border-color 0.15s ease;
+}
+
+.extension-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.extension-input:focus {
+  border-color: var(--accent-blue);
+}
+
 /* ── Hash Algorithm Selector ────────────────────────── */
 .hash-algorithm-row {
   display: flex;

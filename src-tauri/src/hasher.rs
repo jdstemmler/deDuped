@@ -2,7 +2,7 @@
 
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -33,23 +33,46 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
 
 /// Resolve category names into an optional set of allowed extensions.
 /// Returns `None` if `all_files` is true (accept everything).
-/// Returns `Some(set)` with the combined extensions from all enabled categories.
-pub fn resolve_extensions(categories: &[String], all_files: bool) -> Option<HashSet<String>> {
+/// Returns `Some(set)` with the combined extensions from all enabled categories,
+/// with per-category removals and custom additions applied.
+pub fn resolve_extensions(
+    categories: &[String],
+    all_files: bool,
+    custom_extensions: &HashMap<String, Vec<String>>,
+    removed_extensions: &HashMap<String, Vec<String>>,
+) -> Option<HashSet<String>> {
     if all_files {
         return None;
     }
     let mut set = HashSet::new();
     for cat in categories {
-        let exts: &[&str] = match cat.to_lowercase().as_str() {
+        let cat_lower = cat.to_lowercase();
+        let defaults: &[&str] = match cat_lower.as_str() {
             "images" => IMAGE_EXTENSIONS,
             "videos" => VIDEO_EXTENSIONS,
             "documents" => DOCUMENT_EXTENSIONS,
             "audio" => AUDIO_EXTENSIONS,
             _ => continue,
         };
-        for ext in exts {
-            set.insert(ext.to_string());
+
+        // Start with category defaults
+        let mut cat_set: HashSet<String> = defaults.iter().map(|e| e.to_string()).collect();
+
+        // Remove any extensions the user marked for removal
+        if let Some(removed) = removed_extensions.get(&cat_lower) {
+            for ext in removed {
+                cat_set.remove(&ext.to_lowercase());
+            }
         }
+
+        // Add any custom extensions the user added
+        if let Some(custom) = custom_extensions.get(&cat_lower) {
+            for ext in custom {
+                cat_set.insert(ext.to_lowercase());
+            }
+        }
+
+        set.extend(cat_set);
     }
     Some(set)
 }
@@ -151,6 +174,7 @@ pub struct SkippedFile {
 pub struct HashResult {
     pub hashed: Vec<HashedFile>,
     pub skipped: Vec<SkippedFile>,
+    pub cache_hits: usize,
 }
 
 struct FileMeta {
@@ -175,6 +199,7 @@ pub fn hash_files_cached(
     let mut results: Vec<HashedFile> = Vec::with_capacity(files.len());
     let mut needs_hashing: Vec<FileMeta> = Vec::new();
     let mut skipped: Vec<SkippedFile> = Vec::new();
+    let mut cache_hits: usize = 0;
 
     for path in files {
         let path_str = path.to_string_lossy().to_string();
@@ -190,6 +215,7 @@ pub fn hash_files_cached(
 
         if let Some(hash) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
+            cache_hits += 1;
             results.push(HashedFile { path: path_str, hash, size });
         } else {
             needs_hashing.push(FileMeta {
@@ -244,5 +270,5 @@ pub fn hash_files_cached(
         }
     }
 
-    HashResult { hashed: results, skipped }
+    HashResult { hashed: results, skipped, cache_hits }
 }
