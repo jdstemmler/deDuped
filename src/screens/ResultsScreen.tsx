@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile, FilePreview } from "../types";
+import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile, FilePreview, ProgressEvent } from "../types";
 
 interface Props {
   config: ScanConfig;
@@ -36,6 +37,8 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [exportSuccess, setExportSuccess] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [actionCurrent, setActionCurrent] = useState(0);
+  const [actionTotal, setActionTotal] = useState(0);
   const [statsOpen, setStatsOpen] = useState(false);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -161,6 +164,14 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
 
     setExecuting(true);
     setActionError(null);
+    setActionCurrent(0);
+    setActionTotal(dupeFiles.length);
+
+    const unlisten = await listen<ProgressEvent>("scan-progress", (event) => {
+      setActionCurrent(event.payload.current);
+      setActionTotal(event.payload.total);
+    });
+
     try {
       const res = await invoke<ActionResult>("execute_action", {
         evalDir: config.eval_dir,
@@ -189,6 +200,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
+      unlisten();
       setExecuting(false);
     }
   };
@@ -592,13 +604,18 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   onClick={handleConfirmAction}
                 >
                   {executing
-                    ? "Processing..."
+                    ? `${actionCurrent.toLocaleString()} / ${actionTotal.toLocaleString()}`
                     : reviewAction === "trash"
                       ? `Move ${selectedCount} of ${totalMatches} to Trash`
                       : reviewAction === "move"
                         ? `Move ${selectedCount} of ${totalMatches} Files`
                         : "Done"}
                 </button>
+                {executing && actionTotal > 0 && (
+                  <div className="action-progress">
+                    <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -610,11 +627,16 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   onClick={handleConfirmAction}
                 >
                   {executing
-                    ? "Processing..."
+                    ? `${actionCurrent.toLocaleString()} / ${actionTotal.toLocaleString()}`
                     : config.dupe_mode.type === "Trash"
                       ? `Move ${selectedCount} of ${totalMatches} to Trash`
                       : `Move ${selectedCount} of ${totalMatches} Files`}
                 </button>
+                {executing && actionTotal > 0 && (
+                  <div className="action-progress">
+                    <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
+                  </div>
+                )}
               </div>
             </div>
           )}

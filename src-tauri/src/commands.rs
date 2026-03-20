@@ -419,15 +419,18 @@ pub async fn execute_action(
     eval_dir: String,
     files: Vec<String>,
     action: ActionMode,
+    app: AppHandle,
 ) -> Result<ActionResult, String> {
     let eval_path = PathBuf::from(&eval_dir);
     let mut processed = 0;
     let mut errors = Vec::new();
     let mut log_entries: Vec<ActionEntry> = Vec::new();
+    let total = files.len();
 
     let now = iso_now();
 
-    for file_str in &files {
+    for (idx, file_str) in files.iter().enumerate() {
+        emit_progress(&app, "Processing files...", idx, total);
         let file_path = PathBuf::from(file_str);
         if !file_path.exists() {
             errors.push(format!("File not found: {file_str}"));
@@ -476,6 +479,8 @@ pub async fn execute_action(
             Err(e) => errors.push(e),
         }
     }
+
+    emit_progress(&app, "Cleaning up...", total, total);
 
     // Clean up empty directories in eval folder
     let dirs_cleaned = if !matches!(action, ActionMode::Nothing) {

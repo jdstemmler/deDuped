@@ -1214,6 +1214,21 @@ body {
   color: #fff;
 }
 
+.action-progress {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.action-progress-fill {
+  height: 100%;
+  background: var(--accent-green);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
 .threshold-adjust {
   display: flex;
   align-items: center;
