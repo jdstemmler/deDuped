@@ -331,7 +331,10 @@ fn scan_folders_blocking(
                         .min()
                         .unwrap_or(u32::MAX);
 
-                    if min_dist <= config.perceptual_threshold {
+                    if min_dist <= 15 {
+                        // Always use the loosest threshold (15) on the backend.
+                        // The frontend filters by the user's chosen threshold,
+                        // allowing instant re-classification without re-scanning.
                         eval_file.match_type = "similar".to_string();
                         eval_file.hamming_distance = Some(min_dist);
                         similar_matches.push(eval_file);

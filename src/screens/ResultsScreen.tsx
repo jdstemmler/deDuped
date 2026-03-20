@@ -56,9 +56,21 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     () => new Set(result.exact_matches.map((f) => f.path))
   );
   const [viewFilter, setViewFilter] = useState<"all" | "exact" | "similar" | "unique">("all");
+  const [resultsThreshold, setResultsThreshold] = useState(config.perceptual_threshold);
+
+  // Re-partition similar matches and uniques based on the current threshold.
+  // The backend returns all matches with distance <= 15 (loosest). The
+  // frontend filters by the user's chosen threshold for instant re-classification.
+  const filteredSimilar = result.similar_matches.filter(
+    (f) => f.hamming_distance != null && f.hamming_distance <= resultsThreshold
+  );
+  const reclassifiedUniques = result.similar_matches.filter(
+    (f) => f.hamming_distance == null || f.hamming_distance > resultsThreshold
+  );
+  const allUniques = [...reclassifiedUniques, ...result.uniques];
 
   const exactPaths = result.exact_matches.map((f) => f.path);
-  const similarPaths = result.similar_matches.map((f) => f.path);
+  const similarPaths = filteredSimilar.map((f) => f.path);
   const allMatchPaths = [...exactPaths, ...similarPaths];
   const selectedCount = selectedFiles.size;
   const totalMatches = allMatchPaths.length;
@@ -207,7 +219,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } else {
       return;
     }
-    const filesToAct = [...result.exact_matches, ...result.similar_matches].filter((f) => selectedFiles.has(f.path));
+    const filesToAct = [...result.exact_matches, ...filteredSimilar].filter((f) => selectedFiles.has(f.path));
     handleAction(filesToAct, mode);
   };
 
@@ -348,19 +360,19 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                     Exact ({result.exact_matches.length})
                   </button>
                 )}
-                {result.similar_matches.length > 0 && (
+                {filteredSimilar.length > 0 && (
                   <button className={`filter-pill ${viewFilter === "similar" ? "active" : ""}`} onClick={() => setViewFilter("similar")}>
-                    Similar ({result.similar_matches.length})
+                    Similar ({filteredSimilar.length})
                   </button>
                 )}
                 <button className={`filter-pill ${viewFilter === "unique" ? "active" : ""}`} onClick={() => setViewFilter("unique")}>
-                  Unique ({result.uniques.length})
+                  Unique ({allUniques.length})
                 </button>
               </div>
               <div className="selection-buttons">
                 <button className="btn-small" onClick={selectAll}>Select All</button>
                 <button className="btn-small" onClick={selectExact}>Select Exact</button>
-                {result.similar_matches.length > 0 && (
+                {filteredSimilar.length > 0 && (
                   <button className="btn-small" onClick={selectSimilar}>Select Similar</button>
                 )}
                 <button className="btn-small" onClick={selectNone}>Deselect</button>
@@ -389,10 +401,10 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             )}
 
             {/* Similar Matches */}
-            {(viewFilter === "all" || viewFilter === "similar") && result.similar_matches.length > 0 && (
+            {(viewFilter === "all" || viewFilter === "similar") && filteredSimilar.length > 0 && (
               <>
                 {viewFilter === "all" && <div className="section-header">Similar Matches</div>}
-                {result.similar_matches.map((file) => {
+                {filteredSimilar.map((file) => {
                   const isSelected = selectedFiles.has(file.path);
                   const similarity = file.hamming_distance != null ? Math.round((64 - file.hamming_distance) / 64 * 100) : null;
                   return (
@@ -410,10 +422,10 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             )}
 
             {/* Uniques */}
-            {(viewFilter === "all" || viewFilter === "unique") && result.uniques.length > 0 && (
+            {(viewFilter === "all" || viewFilter === "unique") && allUniques.length > 0 && (
               <>
                 {viewFilter === "all" && <div className="section-header">Unique Files</div>}
-                {result.uniques.map((file) => (
+                {allUniques.map((file) => (
                   <div key={file.path} className={`file-row ${selectedPreview === file.path ? "preview-active" : ""}`}>
                     <span style={{ width: 14, flexShrink: 0 }} />
                     <span className="status-dot dot-unique" />
@@ -437,14 +449,14 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               <span className="stat-value">{result.exact_matches.length}</span>
               <span className="stat-label">exact</span>
             </div>
-            {result.similar_matches.length > 0 && (
+            {filteredSimilar.length > 0 && (
               <div className="stat stat-warning">
-                <span className="stat-value">{result.similar_matches.length}</span>
+                <span className="stat-value">{filteredSimilar.length}</span>
                 <span className="stat-label">similar</span>
               </div>
             )}
             <div className="stat stat-success">
-              <span className="stat-value">{result.uniques.length}</span>
+              <span className="stat-value">{allUniques.length}</span>
               <span className="stat-label">unique</span>
             </div>
             {result.skipped > 0 && (
@@ -454,6 +466,32 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               </div>
             )}
           </div>
+
+          {config.perceptual_matching && result.similar_matches.length > 0 && (
+            <div className="threshold-adjust">
+              <span className="threshold-label">Sensitivity</span>
+              <div className="hash-pills">
+                <button
+                  className={`hash-pill ${resultsThreshold === 5 ? "active" : ""}`}
+                  onClick={() => setResultsThreshold(5)}
+                >
+                  Strict
+                </button>
+                <button
+                  className={`hash-pill ${resultsThreshold === 10 ? "active" : ""}`}
+                  onClick={() => setResultsThreshold(10)}
+                >
+                  Moderate
+                </button>
+                <button
+                  className={`hash-pill ${resultsThreshold === 15 ? "active" : ""}`}
+                  onClick={() => setResultsThreshold(15)}
+                >
+                  Loose
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="export-buttons">
             <button className="btn-small" disabled={exporting} onClick={() => handleExport("csv")}>Export CSV</button>
