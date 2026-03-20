@@ -9,6 +9,8 @@ export interface ScanConfig {
   hash_algorithm: string;
   custom_extensions: Record<string, string[]>;
   removed_extensions: Record<string, string[]>;
+  perceptual_matching: boolean;
+  perceptual_threshold: number;
 }
 
 export type DupeMode =
@@ -27,11 +29,13 @@ export interface ScanStats {
   ref_file_count: number;
   eval_file_count: number;
   total_bytes: number;
+  perceptual_compare_ms: number;
 }
 
 export interface ScanResult {
   total_eval: number;
-  duplicates: EvalFile[];
+  exact_matches: EvalFile[];
+  similar_matches: EvalFile[];
   uniques: EvalFile[];
   skipped: number;
   stats: ScanStats;
@@ -42,7 +46,8 @@ export interface EvalFile {
   relative_path: string;
   size: number;
   hash: string;
-  is_duplicate: boolean;
+  match_type: string;
+  hamming_distance: number | null;
 }
 
 export interface ProgressEvent {
