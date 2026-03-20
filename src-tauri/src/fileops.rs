@@ -29,19 +29,22 @@ pub(crate) fn find_sidecars(path: &Path) -> Vec<PathBuf> {
     sidecars
 }
 
-/// Also trashes any associated sidecars.
-pub fn trash_file(path: &Path) -> Result<(), String> {
+/// Also trashes any associated sidecars. Returns warnings for sidecar failures.
+pub fn trash_file(path: &Path) -> Result<Vec<String>, String> {
     let sidecars = find_sidecars(path);
     trash::delete(path).map_err(|e| format!("Failed to trash {}: {e}", path.display()))?;
+    let mut warnings = Vec::new();
     for sidecar in sidecars {
-        let _ = trash::delete(&sidecar);
+        if let Err(e) = trash::delete(&sidecar) {
+            warnings.push(format!("Sidecar {} could not be trashed: {e}", sidecar.display()));
+        }
     }
-    Ok(())
+    Ok(warnings)
 }
 
 /// Preserves subfolder structure relative to `base_dir`.
 /// Also moves any associated sidecar files. Handles filename collisions with `-1`, `-2`, etc.
-pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
+pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<(PathBuf, Vec<String>), String> {
     let relative = file_path
         .strip_prefix(base_dir)
         .map_err(|e| format!("Failed to compute relative path: {e}"))?;
@@ -56,18 +59,29 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
 
     let sidecars = find_sidecars(file_path);
 
-    fs::rename(file_path, &final_target).or_else(|_| -> Result<(), String> {
-        // fs::rename fails across filesystem boundaries. Fall back to copy + delete,
-        // which is not atomic: if interrupted after copy, the file exists in both locations.
+    fs::rename(file_path, &final_target).or_else(|rename_err| -> Result<(), String> {
+        // fs::rename fails across filesystem boundaries. Fall back to copy + delete.
         fs::copy(file_path, &final_target)
-            .map_err(|e| format!("Failed to copy to {}: {e}", final_target.display()))?;
+            .map_err(|e| format!("Failed to move {} (rename: {rename_err}, copy: {e})", file_path.display()))?;
+
+        // Verify the copy is complete before deleting the source
+        let src_size = fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+        let dst_size = fs::metadata(&final_target).map(|m| m.len()).unwrap_or(0);
+        if src_size != dst_size {
+            let _ = fs::remove_file(&final_target);
+            return Err(format!(
+                "Copy verification failed for {} (src={src_size}, dst={dst_size})",
+                file_path.display()
+            ));
+        }
+
         fs::remove_file(file_path)
             .map_err(|e| format!("Failed to remove source {}: {e}", file_path.display()))?;
         Ok(())
     })?;
 
-    // Best-effort: sidecar failures are silently ignored because losing an
-    // .xmp is far less harmful than aborting the primary file operation.
+    // Sidecar handling — failures returned as warnings.
+    let mut warnings = Vec::new();
     for sidecar in sidecars {
         if !sidecar.exists() {
             continue;
@@ -75,17 +89,22 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
         if let Ok(sidecar_relative) = sidecar.strip_prefix(base_dir) {
             let sidecar_target = resolve_collision(&dest_dir.join(sidecar_relative));
             if let Some(parent) = sidecar_target.parent() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(e) = fs::create_dir_all(parent) {
+                    warnings.push(format!("Sidecar dir {}: {e}", parent.display()));
+                    continue;
+                }
             }
-            let _ = fs::rename(&sidecar, &sidecar_target).or_else(|_| {
+            if let Err(e) = fs::rename(&sidecar, &sidecar_target).or_else(|_| {
                 fs::copy(&sidecar, &sidecar_target)?;
                 fs::remove_file(&sidecar)?;
                 Ok::<(), std::io::Error>(())
-            });
+            }) {
+                warnings.push(format!("Sidecar {}: {e}", sidecar.display()));
+            }
         }
     }
 
-    Ok(final_target)
+    Ok((final_target, warnings))
 }
 
 /// Appends `-1`, `-2`, etc. before the extension if `target` already exists.

@@ -1,12 +1,16 @@
-//! Tauri command handlers: folder scanning, duplicate action execution, and report export.
+//! Tauri command handlers: folder scanning, duplicate action execution, report export, file preview, action log, and undo.
 
 use base64::Engine as _;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read as _, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// Global cancellation flag for the active scan or action.
+static CANCELLED: std::sync::LazyLock<Arc<AtomicBool>> =
+    std::sync::LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -16,6 +20,7 @@ use crate::actionlog::{ActionBatch, ActionEntry, ActionLog};
 use crate::cache::HashCache;
 use crate::fileops;
 use crate::hasher;
+use crate::perceptual;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanConfig {
@@ -31,7 +36,13 @@ pub struct ScanConfig {
     pub custom_extensions: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub removed_extensions: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub perceptual_matching: bool,
+    #[serde(default = "default_perceptual_threshold")]
+    pub perceptual_threshold: u32,
 }
+
+fn default_perceptual_threshold() -> u32 { 10 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -53,12 +64,14 @@ pub struct ScanStats {
     pub ref_file_count: usize,
     pub eval_file_count: usize,
     pub total_bytes: u64,
+    pub perceptual_compare_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub total_eval: usize,
-    pub duplicates: Vec<EvalFile>,
+    pub exact_matches: Vec<EvalFile>,
+    pub similar_matches: Vec<EvalFile>,
     pub uniques: Vec<EvalFile>,
     pub skipped: usize,
     pub stats: ScanStats,
@@ -70,7 +83,8 @@ pub struct EvalFile {
     pub relative_path: String,
     pub size: u64,
     pub hash: String,
-    pub is_duplicate: bool,
+    pub match_type: String,
+    pub hamming_distance: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,6 +137,11 @@ fn spawn_progress_reporter(
 }
 
 #[tauri::command]
+pub async fn cancel_scan() {
+    CANCELLED.store(true, Ordering::Relaxed);
+}
+
+#[tauri::command]
 pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResult, String> {
     let ref_dir = PathBuf::from(&config.reference_dir);
     let eval_dir = PathBuf::from(&config.eval_dir);
@@ -133,14 +152,23 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     if !eval_dir.is_dir() {
         return Err(format!("Eval folder does not exist: {}", eval_dir.display()));
     }
+    if ref_dir == eval_dir {
+        return Err("Reference and eval folders must be different".to_string());
+    }
+    if ref_dir.starts_with(&eval_dir) || eval_dir.starts_with(&ref_dir) {
+        return Err("Reference and eval folders cannot be nested inside each other".to_string());
+    }
 
     // Tauri async commands run on Tokio. Blocking I/O (hashing, SQLite) would
     // starve the runtime, so we spawn a dedicated OS thread and bridge back
     // via a oneshot channel.
     let (tx, rx) = tokio::sync::oneshot::channel();
 
+    CANCELLED.store(false, Ordering::Relaxed);
+    let cancelled = CANCELLED.clone();
+
     std::thread::spawn(move || {
-        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config);
+        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config, &cancelled);
         let _ = tx.send(result);
     });
 
@@ -152,6 +180,7 @@ fn scan_folders_blocking(
     ref_dir: &Path,
     eval_dir: &Path,
     config: &ScanConfig,
+    cancelled: &Arc<AtomicBool>,
 ) -> Result<ScanResult, String> {
     let scan_start = Instant::now();
 
@@ -163,7 +192,9 @@ fn scan_folders_blocking(
     );
 
     let cache = HashCache::open()?;
-    let _ = cache.prune();
+    if let Err(e) = cache.prune() {
+        eprintln!("Warning: cache prune failed: {e}");
+    }
 
     // -- Reference: collect --
     emit_progress(app, "Collecting reference files...", 0, 0);
@@ -171,6 +202,10 @@ fn scan_folders_blocking(
     let ref_files = hasher::collect_files(ref_dir, allowed.as_ref());
     let ref_collect_ms = t0.elapsed().as_millis() as u64;
     let ref_file_count = ref_files.len();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     // -- Reference: hash --
     let ref_progress = Arc::new(AtomicUsize::new(0));
@@ -182,10 +217,14 @@ fn scan_folders_blocking(
     );
 
     let t0 = Instant::now();
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm);
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm, cancelled);
     let ref_hash_ms = t0.elapsed().as_millis() as u64;
     let ref_cache_hits = ref_result.cache_hits;
     let _ = reporter.join();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     let ref_hashes: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
 
@@ -195,6 +234,10 @@ fn scan_folders_blocking(
     let eval_files = hasher::collect_files(eval_dir, allowed.as_ref());
     let eval_collect_ms = t0.elapsed().as_millis() as u64;
     let eval_file_count = eval_files.len();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     // -- Eval: hash --
     let eval_progress = Arc::new(AtomicUsize::new(0));
@@ -206,10 +249,14 @@ fn scan_folders_blocking(
     );
 
     let t0 = Instant::now();
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm);
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm, cancelled);
     let eval_hash_ms = t0.elapsed().as_millis() as u64;
     let eval_cache_hits = eval_result.cache_hits;
     let _ = reporter.join();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     // Sort by path so intra-eval duplicate detection is deterministic: when two
     // eval files share a hash, the lexicographically-first path is kept as "unique."
@@ -222,17 +269,17 @@ fn scan_folders_blocking(
     let total_bytes: u64 = ref_result.hashed.iter().map(|f| f.size).sum::<u64>()
         + eval_hashed.iter().map(|f| f.size).sum::<u64>();
 
-    // Detect intra-eval duplicates: track which hashes we've already seen
+    // -- Content comparison --
     emit_progress(app, "Comparing files...", 0, 0);
     let mut seen_eval_hashes: HashSet<String> = HashSet::new();
 
-    let mut duplicates = Vec::new();
-    let mut uniques = Vec::new();
+    let mut exact_matches = Vec::new();
+    let mut non_exact_eval = Vec::new();
 
     for ef in &eval_hashed {
         let is_ref_dupe = ref_hashes.contains(&ef.hash);
         let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
-        let is_duplicate = is_ref_dupe || is_intra_dupe;
+        let is_exact = is_ref_dupe || is_intra_dupe;
 
         let relative_path = Path::new(&ef.path)
             .strip_prefix(eval_dir)
@@ -245,28 +292,75 @@ fn scan_folders_blocking(
             relative_path,
             size: ef.size,
             hash: ef.hash.clone(),
-            is_duplicate,
+            match_type: if is_exact { "exact".to_string() } else { "unique".to_string() },
+            hamming_distance: None,
         };
 
-        if is_duplicate {
-            duplicates.push(eval_file);
+        if is_exact {
+            exact_matches.push(eval_file);
         } else {
-            uniques.push(eval_file);
+            non_exact_eval.push((eval_file, ef.perceptual_hash));
         }
 
-        // Only track non-ref hashes for intra-eval detection. If a hash matches
-        // reference, every eval copy is a ref-dupe regardless of how many exist.
         if !is_ref_dupe {
             seen_eval_hashes.insert(ef.hash.clone());
         }
+    }
+
+    // -- Perceptual comparison (optional) --
+    let mut similar_matches = Vec::new();
+    let mut perceptual_compare_ms: u64 = 0;
+    let uniques_candidate;
+
+    if config.perceptual_matching {
+        let ref_phashes: Vec<u64> = ref_result.hashed.iter()
+            .filter_map(|f| f.perceptual_hash)
+            .collect();
+
+        if !ref_phashes.is_empty() {
+            let compare_total = non_exact_eval.len();
+            emit_progress(app, "Comparing perceptual hashes...", 0, compare_total);
+            let t0 = Instant::now();
+
+            let mut still_unique = Vec::new();
+            for (i, (mut eval_file, eval_phash)) in non_exact_eval.into_iter().enumerate() {
+                emit_progress(app, "Comparing perceptual hashes...", i + 1, compare_total);
+                if let Some(eval_ph) = eval_phash {
+                    let min_dist = ref_phashes.iter()
+                        .map(|&rph| perceptual::hamming_distance(eval_ph, rph))
+                        .min()
+                        .unwrap_or(u32::MAX);
+
+                    if min_dist <= 15 {
+                        // Always use the loosest threshold (15) on the backend.
+                        // The frontend filters by the user's chosen threshold,
+                        // allowing instant re-classification without re-scanning.
+                        eval_file.match_type = "similar".to_string();
+                        eval_file.hamming_distance = Some(min_dist);
+                        similar_matches.push(eval_file);
+                    } else {
+                        still_unique.push(eval_file);
+                    }
+                } else {
+                    still_unique.push(eval_file);
+                }
+            }
+            uniques_candidate = still_unique;
+            perceptual_compare_ms = t0.elapsed().as_millis() as u64;
+        } else {
+            uniques_candidate = non_exact_eval.into_iter().map(|(f, _)| f).collect();
+        }
+    } else {
+        uniques_candidate = non_exact_eval.into_iter().map(|(f, _)| f).collect();
     }
 
     let total_ms = scan_start.elapsed().as_millis() as u64;
 
     Ok(ScanResult {
         total_eval: eval_hashed.len(),
-        duplicates,
-        uniques,
+        exact_matches,
+        similar_matches,
+        uniques: uniques_candidate,
         skipped,
         stats: ScanStats {
             ref_collect_ms,
@@ -279,6 +373,7 @@ fn scan_folders_blocking(
             ref_file_count,
             eval_file_count,
             total_bytes,
+            perceptual_compare_ms,
         },
     })
 }
@@ -324,15 +419,23 @@ pub async fn execute_action(
     eval_dir: String,
     files: Vec<String>,
     action: ActionMode,
+    app: AppHandle,
 ) -> Result<ActionResult, String> {
     let eval_path = PathBuf::from(&eval_dir);
     let mut processed = 0;
     let mut errors = Vec::new();
     let mut log_entries: Vec<ActionEntry> = Vec::new();
+    let total = files.len();
 
     let now = iso_now();
+    CANCELLED.store(false, Ordering::Relaxed);
 
-    for file_str in &files {
+    for (idx, file_str) in files.iter().enumerate() {
+        if CANCELLED.load(Ordering::Relaxed) {
+            errors.push(format!("Cancelled after processing {processed} of {total} files"));
+            break;
+        }
+        emit_progress(&app, "Processing files...", idx, total);
         let file_path = PathBuf::from(file_str);
         if !file_path.exists() {
             errors.push(format!("File not found: {file_str}"));
@@ -342,7 +445,10 @@ pub async fn execute_action(
         let result = match &action {
             ActionMode::Trash => {
                 let res = fileops::trash_file(&file_path);
-                if res.is_ok() {
+                if let Ok(warnings) = &res {
+                    for w in warnings {
+                        errors.push(w.clone());
+                    }
                     log_entries.push(ActionEntry {
                         timestamp: now.clone(),
                         action: "trash".to_string(),
@@ -351,12 +457,15 @@ pub async fn execute_action(
                         eval_dir: eval_dir.clone(),
                     });
                 }
-                res
+                res.map(|_| ())
             }
             ActionMode::MoveToFolder { dest } => {
                 let dest_path_buf = PathBuf::from(dest);
                 let res = fileops::move_file(&file_path, &eval_path, &dest_path_buf);
-                if let Ok(final_dest) = &res {
+                if let Ok((final_dest, warnings)) = &res {
+                    for w in warnings {
+                        errors.push(w.clone());
+                    }
                     log_entries.push(ActionEntry {
                         timestamp: now.clone(),
                         action: "move".to_string(),
@@ -376,9 +485,17 @@ pub async fn execute_action(
         }
     }
 
+    emit_progress(&app, "Cleaning up...", total, total);
+
     // Clean up empty directories in eval folder
     let dirs_cleaned = if !matches!(action, ActionMode::Nothing) {
-        fileops::cleanup_empty_dirs(&eval_path).unwrap_or(0)
+        match fileops::cleanup_empty_dirs(&eval_path) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("Warning: directory cleanup failed: {e}");
+                0
+            }
+        }
     } else {
         0
     };
@@ -404,8 +521,9 @@ pub async fn execute_action(
             eval_dir: eval_dir.clone(),
         };
 
-        if let Ok(log) = ActionLog::default() {
-            let _ = log.append(batch);
+        let log_result = ActionLog::default().and_then(|log| log.append(batch));
+        if let Err(e) = log_result {
+            errors.push(format!("Warning: failed to record action for undo: {e}"));
         }
     }
 
@@ -495,9 +613,18 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
         }
 
         let target = fileops::resolve_collision(&source);
-        let res = fs::rename(&dest, &target).or_else(|_| {
+        let res = fs::rename(&dest, &target).or_else(|rename_err| {
             fs::copy(&dest, &target)
-                .map_err(|e| format!("Failed to copy {} back: {e}", dest.display()))?;
+                .map_err(|e| format!("Failed to restore {} (rename: {rename_err}, copy: {e})", dest.display()))?;
+            let src_size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+            let dst_size = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+            if src_size != dst_size {
+                let _ = fs::remove_file(&target);
+                return Err(format!(
+                    "Copy verification failed restoring {} (src={src_size}, dst={dst_size})",
+                    dest.display()
+                ));
+            }
             fs::remove_file(&dest)
                 .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
             Ok::<(), String>(())
@@ -521,12 +648,30 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
                     let dest_str = dest_file.to_string_lossy();
                     if let Some(root_str) = dest_str.strip_suffix(&*relative_str) {
                         let dest_root = PathBuf::from(root_str.trim_end_matches('/'));
-                        fileops::cleanup_empty_dirs(&dest_root).unwrap_or(0)
+                        match fileops::cleanup_empty_dirs(&dest_root) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Warning: directory cleanup failed: {e}");
+                                0
+                            }
+                        }
                     } else {
-                        fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                        match fileops::cleanup_empty_dirs(parent) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Warning: directory cleanup failed: {e}");
+                                0
+                            }
+                        }
                     }
                 } else {
-                    fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                    match fileops::cleanup_empty_dirs(parent) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            eprintln!("Warning: directory cleanup failed: {e}");
+                            0
+                        }
+                    }
                 }
             } else {
                 0
@@ -539,7 +684,22 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
     };
 
     let batch_id = batch.id.clone();
-    log.remove_batch(&batch_id)?;
+    if errors.is_empty() {
+        // All entries restored — remove the batch
+        log.remove_batch(&batch_id)?;
+    } else if processed > 0 {
+        // Partial undo — keep only entries whose destination still exists (not restored)
+        let remaining: Vec<_> = batch.entries.iter()
+            .filter(|entry| {
+                entry.dest_path.as_ref()
+                    .map(|d| std::path::Path::new(d).exists())
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+        log.update_entries(&batch_id, remaining)?;
+    }
+    // If processed == 0, leave the batch as-is for retry
 
     Ok(ActionResult {
         processed,
@@ -571,28 +731,25 @@ pub async fn export_report(
             let mut file = fs::File::create(&path)
                 .map_err(|e| format!("Failed to create file: {e}"))?;
 
-            writeln!(file, "status,relative_path,size_bytes,hash")
+            writeln!(file, "status,relative_path,size_bytes,hash,hamming_distance")
                 .map_err(|e| format!("Failed to write header: {e}"))?;
 
-            for f in &results.duplicates {
+            let all_files = results.exact_matches.iter()
+                .chain(results.similar_matches.iter())
+                .chain(results.uniques.iter());
+
+            for f in all_files {
+                let dist_str = f.hamming_distance
+                    .map(|d| d.to_string())
+                    .unwrap_or_default();
                 writeln!(
                     file,
-                    "{},{},{},{}",
-                    "duplicate",
+                    "{},{},{},{},{}",
+                    csv_quote(&f.match_type),
                     csv_quote(&f.relative_path),
                     f.size,
                     f.hash,
-                )
-                .map_err(|e| format!("Failed to write row: {e}"))?;
-            }
-            for f in &results.uniques {
-                writeln!(
-                    file,
-                    "{},{},{},{}",
-                    "unique",
-                    csv_quote(&f.relative_path),
-                    f.size,
-                    f.hash,
+                    dist_str,
                 )
                 .map_err(|e| format!("Failed to write row: {e}"))?;
             }
@@ -612,8 +769,6 @@ pub async fn export_report(
 
 // ── File Preview ────────────────────────────────────────
 
-/// Maximum file size (5 MB) for which we'll generate a thumbnail.
-const MAX_THUMBNAIL_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FilePreview {
@@ -656,10 +811,24 @@ fn mime_from_extension(ext: &str) -> &'static str {
     }
 }
 
-/// Whether the extension is one we can turn into a base64 thumbnail
-/// (formats browsers can display natively in an <img> tag).
+/// Whether the extension is one the `image` crate can decode for thumbnail generation.
 fn can_thumbnail(ext: &str) -> bool {
     matches!(ext, "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tif" | "tiff")
+}
+
+/// Maximum thumbnail dimension (width or height) in pixels.
+const THUMBNAIL_MAX_DIM: u32 = 800;
+
+/// Decode an image, resize it to fit within THUMBNAIL_MAX_DIM, and return
+/// a JPEG-encoded base64 data URI. Works for any format the `image` crate
+/// supports, regardless of file size.
+fn generate_thumbnail(file_path: &Path) -> Option<String> {
+    let img = image::open(file_path).ok()?;
+    let thumb = img.thumbnail(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM);
+    let mut buf = std::io::Cursor::new(Vec::new());
+    thumb.write_to(&mut buf, image::ImageFormat::Jpeg).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+    Some(format!("data:image/jpeg;base64,{b64}"))
 }
 
 #[tauri::command]
@@ -682,16 +851,8 @@ pub async fn get_file_preview(path: String) -> Result<FilePreview, String> {
     let mime_type = mime_from_extension(&ext).to_string();
     let is_image = mime_type.starts_with("image/");
 
-    let thumbnail_data = if can_thumbnail(&ext) && size <= MAX_THUMBNAIL_BYTES {
-        let mut file = fs::File::open(&file_path)
-            .map_err(|e| format!("Failed to open file: {e}"))?;
-        let mut buf = Vec::with_capacity(size as usize);
-        file.read_to_end(&mut buf)
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-        let data_uri = format!("data:{};base64,{}", mime_type, b64);
-        Some(data_uri)
+    let thumbnail_data = if can_thumbnail(&ext) {
+        generate_thumbnail(&file_path)
     } else {
         None
     };

@@ -1,4 +1,4 @@
-//! File discovery, hashing (SHA-256 / xxHash), and cache-aware parallel hashing pipeline.
+//! File discovery, content hashing (SHA-256 / xxHash), perceptual hashing (dHash), and cache-aware parallel hashing pipeline.
 
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -6,12 +6,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache::{CachedFile, HashCache};
+use crate::perceptual;
 
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp", "heic", "heif",
@@ -30,6 +31,16 @@ pub const DOCUMENT_EXTENSIONS: &[&str] = &[
 pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "aac", "wav", "aiff", "ogg", "m4a", "wma", "alac",
 ];
+
+/// Extensions that support perceptual hashing (image crate can decode these).
+const PERCEPTUAL_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp"];
+
+fn supports_perceptual_hash(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| PERCEPTUAL_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
 
 /// Resolve category names into an optional set of allowed extensions.
 /// Returns `None` if `all_files` is true (accept everything).
@@ -161,6 +172,7 @@ pub struct HashedFile {
     pub path: String,
     pub hash: String,
     pub size: u64,
+    pub perceptual_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -186,6 +198,8 @@ struct FileMeta {
 }
 
 /// Check cache serially, hash misses in parallel, update cache serially.
+/// Legacy cache entries without perceptual hashes are backfilled on hit
+/// for supported image formats.
 ///
 /// Cache access is serial because `HashCache` wraps a SQLite connection
 /// which is not `Sync`. The expensive part (file I/O + hashing) runs in
@@ -195,13 +209,17 @@ pub fn hash_files_cached(
     cache: &HashCache,
     progress: Arc<AtomicUsize>,
     algorithm: &str,
+    cancelled: &Arc<AtomicBool>,
 ) -> HashResult {
     let mut results: Vec<HashedFile> = Vec::with_capacity(files.len());
     let mut needs_hashing: Vec<FileMeta> = Vec::new();
     let mut skipped: Vec<SkippedFile> = Vec::new();
     let mut cache_hits: usize = 0;
 
-    for path in files {
+    for (idx, path) in files.iter().enumerate() {
+        if idx % 100 == 0 && cancelled.load(Ordering::Relaxed) {
+            break;
+        }
         let path_str = path.to_string_lossy().to_string();
         let meta = match file_meta(path) {
             Ok(m) => m,
@@ -213,10 +231,38 @@ pub fn hash_files_cached(
         };
         let (size, mtime_secs, mtime_nanos) = meta;
 
-        if let Some(hash) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
+        if let Some(hit) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
             cache_hits += 1;
-            results.push(HashedFile { path: path_str, hash, size });
+
+            // Backfill: if the cache entry predates perceptual hashing,
+            // compute and store the dHash now.
+            let phash = match hit.perceptual_hash {
+                Some(ph) => Some(ph),
+                None if supports_perceptual_hash(path) => {
+                    let ph = perceptual::compute_dhash(path);
+                    if ph.is_some() {
+                        let _ = cache.set(&CachedFile {
+                            path: path_str.clone(),
+                            hash: hit.hash.clone(),
+                            size,
+                            mtime_secs,
+                            mtime_nanos,
+                            algorithm: algorithm.to_string(),
+                            perceptual_hash: ph.map(|v| v as i64),
+                        });
+                    }
+                    ph
+                }
+                None => None,
+            };
+
+            results.push(HashedFile {
+                path: path_str,
+                hash: hit.hash,
+                size,
+                perceptual_hash: phash,
+            });
         } else {
             needs_hashing.push(FileMeta {
                 path: path.clone(),
@@ -231,13 +277,22 @@ pub fn hash_files_cached(
     // Hash cache misses in parallel
     let algo = algorithm.to_string();
     let progress_clone = progress.clone();
-    let newly_hashed: Vec<Result<(FileMeta, String), SkippedFile>> = needs_hashing
+    let cancelled_clone = cancelled.clone();
+    let newly_hashed: Vec<Result<(FileMeta, String, Option<u64>), SkippedFile>> = needs_hashing
         .into_par_iter()
         .map(|fm| {
+            if cancelled_clone.load(Ordering::Relaxed) {
+                return Err(SkippedFile { path: fm.path_str.clone(), reason: "Cancelled".to_string() });
+            }
             match hash_file(&fm.path, &algo) {
                 Ok(hash) => {
+                    let phash = if supports_perceptual_hash(&fm.path) {
+                        perceptual::compute_dhash(&fm.path)
+                    } else {
+                        None
+                    };
                     progress_clone.fetch_add(1, Ordering::Relaxed);
-                    Ok((fm, hash))
+                    Ok((fm, hash, phash))
                 }
                 Err(reason) => {
                     progress_clone.fetch_add(1, Ordering::Relaxed);
@@ -251,7 +306,7 @@ pub fn hash_files_cached(
     // Update cache and collect results (serial)
     for item in newly_hashed {
         match item {
-            Ok((fm, hash)) => {
+            Ok((fm, hash, phash)) => {
                 let _ = cache.set(&CachedFile {
                     path: fm.path_str.clone(),
                     hash: hash.clone(),
@@ -259,11 +314,13 @@ pub fn hash_files_cached(
                     mtime_secs: fm.mtime_secs,
                     mtime_nanos: fm.mtime_nanos,
                     algorithm: algorithm.to_string(),
+                    perceptual_hash: phash.map(|v| v as i64),
                 });
                 results.push(HashedFile {
                     path: fm.path_str,
                     hash,
                     size: fm.size,
+                    perceptual_hash: phash,
                 });
             }
             Err(sf) => skipped.push(sf),

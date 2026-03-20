@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicbarker/tauri/dev/core/tauri-config-schema/schema.json",
   "productName": "deDuped",
   "identifier": "com.photodedup",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "deDuped",
-        "width": 1100,
-        "height": 700,
+        "width": 1200,
+        "height": 820,
         "resizable": true,
         "fullscreen": false
       }

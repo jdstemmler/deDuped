@@ -31,6 +31,7 @@ export default function App() {
       <header className="app-header">
         <h1>deDuped</h1>
         <span className="subtitle">One-way file deduplication</span>
+        <span className="build-stamp">built {__BUILD_TIMESTAMP__}</span>
       </header>
       <main className="app-main">
         {screen === "setup" && (

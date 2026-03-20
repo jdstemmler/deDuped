@@ -35,6 +35,8 @@ interface SavedConfig {
   selectedCategories: string[];
   allFiles: boolean;
   hashAlgorithm?: string;
+  perceptualMatching?: boolean;
+  perceptualThreshold?: number;
 }
 
 function loadSavedConfig(): SavedConfig | null {
@@ -42,7 +44,8 @@ function loadSavedConfig(): SavedConfig | null {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as SavedConfig;
-  } catch {
+  } catch (err) {
+    console.warn("Failed to load saved config:", err);
     return null;
   }
 }
@@ -56,7 +59,8 @@ function loadRecord(key: string): Record<string, string[]> {
     const raw = localStorage.getItem(key);
     if (!raw) return {};
     return JSON.parse(raw) as Record<string, string[]>;
-  } catch {
+  } catch (err) {
+    console.warn("Failed to load saved record:", err);
     return {};
   }
 }
@@ -117,6 +121,21 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
   const [hashAlgorithm, setHashAlgorithm] = useState<string>(
     initialConfig?.hash_algorithm ?? saved?.hashAlgorithm ?? "sha256"
   );
+
+  const [perceptualMatching, setPerceptualMatching] = useState(
+    initialConfig?.perceptual_matching ?? saved?.perceptualMatching ?? false
+  );
+  const [perceptualThreshold, setPerceptualThreshold] = useState<number>(
+    initialConfig?.perceptual_threshold ?? saved?.perceptualThreshold ?? 10
+  );
+
+  const hasImageCategory = allFiles || selectedCategories.has("images");
+
+  useEffect(() => {
+    if (!hasImageCategory) {
+      setPerceptualMatching(false);
+    }
+  }, [hasImageCategory]);
 
   const [customExtensions, setCustomExtensions] = useState<Record<string, string[]>>(
     () => initialConfig?.custom_extensions ?? loadRecord(EXT_CUSTOM_KEY)
@@ -191,6 +210,8 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       selectedCategories: Array.from(selectedCategories),
       allFiles,
       hashAlgorithm,
+      perceptualMatching,
+      perceptualThreshold,
     });
 
     let mode: DupeMode;
@@ -209,6 +230,8 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       hash_algorithm: hashAlgorithm,
       custom_extensions: customExtensions,
       removed_extensions: removedExtensions,
+      perceptual_matching: perceptualMatching,
+      perceptual_threshold: perceptualThreshold,
     });
   };
 
@@ -521,6 +544,51 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
               </div>
             )}
           </div>
+        </div>
+        <div className="perceptual-row">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={perceptualMatching}
+              onChange={(e) => setPerceptualMatching(e.target.checked)}
+              disabled={!hasImageCategory}
+            />
+            <span className="toggle-slider" />
+          </label>
+          <span className={`hash-label ${!hasImageCategory ? "disabled" : ""}`}>
+            Similar image detection
+          </span>
+          {perceptualMatching && hasImageCategory && (
+            <>
+              <div className="hash-pills">
+                <button
+                  className={`hash-pill ${perceptualThreshold === 5 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(5)}
+                >
+                  Strict
+                </button>
+                <button
+                  className={`hash-pill ${perceptualThreshold === 10 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(10)}
+                >
+                  Moderate
+                </button>
+                <button
+                  className={`hash-pill ${perceptualThreshold === 15 ? "active" : ""}`}
+                  onClick={() => setPerceptualThreshold(15)}
+                >
+                  Loose
+                </button>
+              </div>
+              <span className="hash-hint">
+                {perceptualThreshold === 5
+                  ? "Metadata changes, recompression"
+                  : perceptualThreshold === 10
+                    ? "Quality differences, minor crops"
+                    : "Significant changes \u2014 review carefully"}
+              </span>
+            </>
+          )}
         </div>
       </div>
 

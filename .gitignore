@@ -20,3 +20,6 @@ src-tauri/gen/
 .DS_Store
 
 test_files/
+.playwright-mcp/
+*.png
+!screenshots/*.png

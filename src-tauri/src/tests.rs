@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -288,7 +288,7 @@ fn move_file_preserves_structure() {
     let file = sub.join("photo.jpg");
     fs::write(&file, b"image data").unwrap();
 
-    let result = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
+    let (result, _warnings) = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
 
     assert_eq!(result, dest_dir.path().join("sub").join("photo.jpg"));
     assert!(result.exists());
@@ -308,7 +308,7 @@ fn move_file_handles_collision() {
     let existing = dest_dir.path().join("photo.jpg");
     fs::write(&existing, b"old version").unwrap();
 
-    let result = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
+    let (result, _warnings) = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
 
     assert_eq!(
         result.file_name().unwrap().to_string_lossy(),
@@ -350,12 +350,13 @@ fn cache_set_and_get() {
         mtime_secs: 1700000000,
         mtime_nanos: 500,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
 
     cache.set(&entry).unwrap();
 
-    let result = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "sha256");
-    assert_eq!(result, Some("abc123".to_string()));
+    let hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "sha256").unwrap();
+    assert_eq!(hit.hash, "abc123");
 }
 
 #[test]
@@ -369,18 +370,19 @@ fn cache_get_returns_none_on_mismatch() {
         mtime_secs: 1700000000,
         mtime_nanos: 500,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
 
     cache.set(&entry).unwrap();
 
     // Different size
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500, "sha256").is_none());
     // Different mtime
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500, "sha256").is_none());
     // Different path
-    assert_eq!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500, "sha256").is_none());
     // Different algorithm
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "xxh3"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "xxh3").is_none());
 }
 
 #[test]
@@ -394,6 +396,7 @@ fn cache_set_overwrites() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry1).unwrap();
 
@@ -404,16 +407,15 @@ fn cache_set_overwrites() {
         mtime_secs: 1700000001,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry2).unwrap();
 
     // Old metadata should no longer match
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256").is_none());
     // New metadata should match
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0, "sha256"),
-        Some("new_hash".to_string())
-    );
+    let hit = cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "new_hash");
 }
 
 #[test]
@@ -427,6 +429,7 @@ fn cache_stores_different_algorithms_separately() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&sha_entry).unwrap();
 
@@ -437,18 +440,15 @@ fn cache_stores_different_algorithms_separately() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "xxh3".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&xxh_entry).unwrap();
 
     // Each algorithm returns its own hash
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"),
-        Some("sha_hash".to_string())
-    );
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "xxh3"),
-        Some("xxh_hash".to_string())
-    );
+    let sha_hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256").unwrap();
+    assert_eq!(sha_hit.hash, "sha_hash");
+    let xxh_hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "xxh3").unwrap();
+    assert_eq!(xxh_hit.hash, "xxh_hash");
 }
 
 #[test]
@@ -463,6 +463,7 @@ fn cache_prune_removes_nonexistent() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry).unwrap();
 
@@ -470,10 +471,7 @@ fn cache_prune_removes_nonexistent() {
     assert_eq!(pruned, 1);
 
     // Entry should be gone
-    assert_eq!(
-        cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0, "sha256"),
-        None
-    );
+    assert!(cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0, "sha256").is_none());
 }
 
 #[test]
@@ -492,6 +490,7 @@ fn cache_prune_keeps_existing() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry).unwrap();
 
@@ -499,10 +498,8 @@ fn cache_prune_keeps_existing() {
     assert_eq!(pruned, 0);
 
     // Entry should still be there
-    assert_eq!(
-        cache.get(&path_str, 4, 1700000000, 0, "sha256"),
-        Some("exists".to_string())
-    );
+    let hit = cache.get(&path_str, 4, 1700000000, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "exists");
 }
 
 // ---------------------------------------------------------------------------
@@ -577,13 +574,13 @@ fn detect_duplicates(
     eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut seen_eval_hashes: HashSet<String> = HashSet::new();
-    let mut duplicates = Vec::new();
+    let mut exact_matches = Vec::new();
     let mut uniques = Vec::new();
 
     for ef in eval_hashed.iter() {
         let is_ref_dupe = ref_hash_set.contains(&ef.hash);
         let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
-        let is_duplicate = is_ref_dupe || is_intra_dupe;
+        let is_exact = is_ref_dupe || is_intra_dupe;
 
         let relative_path = Path::new(&ef.path)
             .strip_prefix(eval_dir)
@@ -596,11 +593,12 @@ fn detect_duplicates(
             relative_path,
             size: ef.size,
             hash: ef.hash.clone(),
-            is_duplicate,
+            match_type: if is_exact { "exact".to_string() } else { "unique".to_string() },
+            hamming_distance: None,
         };
 
-        if is_duplicate {
-            duplicates.push(eval_file);
+        if is_exact {
+            exact_matches.push(eval_file);
         } else {
             uniques.push(eval_file);
         }
@@ -610,7 +608,7 @@ fn detect_duplicates(
         }
     }
 
-    (duplicates, uniques)
+    (exact_matches, uniques)
 }
 
 // ---------------------------------------------------------------------------
@@ -649,28 +647,29 @@ fn integration_full_scan_finds_duplicates() {
     let cache = HashCache::open_in_memory().unwrap();
     let progress = Arc::new(AtomicUsize::new(0));
 
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, progress.clone(), "sha256");
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, progress.clone(), "sha256", &no_cancel);
     assert_eq!(ref_result.hashed.len(), 3);
     assert!(ref_result.skipped.is_empty());
 
     let progress2 = Arc::new(AtomicUsize::new(0));
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, progress2, "sha256");
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, progress2, "sha256", &no_cancel);
     assert_eq!(eval_result.hashed.len(), 5);
     assert!(eval_result.skipped.is_empty());
 
     let mut eval_hashed = eval_result.hashed;
-    let (duplicates, uniques) = detect_duplicates(&ref_result.hashed, &mut eval_hashed, &eval_dir);
+    let (exact_matches, uniques) = detect_duplicates(&ref_result.hashed, &mut eval_hashed, &eval_dir);
 
-    assert_eq!(duplicates.len(), 3, "Expected 3 duplicates (2 ref + 1 intra-eval)");
+    assert_eq!(exact_matches.len(), 3, "Expected 3 duplicates (2 ref + 1 intra-eval)");
     assert_eq!(uniques.len(), 2, "Expected 2 unique files");
 
     // total_eval
-    let total_eval = duplicates.len() + uniques.len();
+    let total_eval = exact_matches.len() + uniques.len();
     assert_eq!(total_eval, 5);
 
     // Results should be sorted by path (deterministic)
-    for window in duplicates.windows(2) {
-        assert!(window[0].path <= window[1].path, "duplicates not sorted by path");
+    for window in exact_matches.windows(2) {
+        assert!(window[0].path <= window[1].path, "exact_matches not sorted by path");
     }
     for window in uniques.windows(2) {
         assert!(window[0].path <= window[1].path, "uniques not sorted by path");
@@ -696,8 +695,9 @@ fn integration_cache_speeds_up_second_run() {
     let cache = HashCache::open_in_memory().unwrap();
 
     // First run: everything should be hashed (no cache hits)
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let progress1 = Arc::new(AtomicUsize::new(0));
-    let result1 = hasher::hash_files_cached(&files, &cache, progress1, "sha256");
+    let result1 = hasher::hash_files_cached(&files, &cache, progress1, "sha256", &no_cancel);
     assert_eq!(result1.hashed.len(), 3);
     assert!(result1.skipped.is_empty());
 
@@ -713,7 +713,7 @@ fn integration_cache_speeds_up_second_run() {
     // the result which should be identical. The internal `needs_hashing` vec
     // should be empty because all files are in cache with matching metadata.
     let progress2 = Arc::new(AtomicUsize::new(0));
-    let result2 = hasher::hash_files_cached(&files, &cache, progress2.clone(), "sha256");
+    let result2 = hasher::hash_files_cached(&files, &cache, progress2.clone(), "sha256", &no_cancel);
     assert_eq!(result2.hashed.len(), 3);
     assert!(result2.skipped.is_empty());
 
@@ -749,7 +749,7 @@ fn integration_move_preserves_structure_and_sidecars() {
     create_file(&eval_dir, "2024/photo.xmp", b"sidecar metadata");
 
     let nef_path = eval_dir.join("2024/photo.nef");
-    let result = fileops::move_file(&nef_path, &eval_dir, &dest_dir).unwrap();
+    let (result, _warnings) = fileops::move_file(&nef_path, &eval_dir, &dest_dir).unwrap();
 
     // NEF should be at dest/2024/photo.nef
     assert_eq!(result, dest_dir.join("2024").join("photo.nef"));
@@ -785,7 +785,7 @@ fn integration_move_handles_collision() {
     create_file(&dest_dir, "photo.jpg", b"original version");
 
     let eval_photo = eval_dir.join("photo.jpg");
-    let result = fileops::move_file(&eval_photo, &eval_dir, &dest_dir).unwrap();
+    let (result, _warnings) = fileops::move_file(&eval_photo, &eval_dir, &dest_dir).unwrap();
 
     // Original at dest should be untouched
     let dest_original = dest_dir.join("photo.jpg");
@@ -924,36 +924,41 @@ fn integration_csv_export() {
 
     let results = ScanResult {
         total_eval: 4,
-        duplicates: vec![
+        exact_matches: vec![
             EvalFile {
                 path: "/eval/dup1.jpg".to_string(),
                 relative_path: "dup1.jpg".to_string(),
                 size: 1024,
                 hash: "aaa111".to_string(),
-                is_duplicate: true,
+                match_type: "exact".to_string(),
+                hamming_distance: None,
             },
             EvalFile {
                 path: "/eval/dup2.jpg".to_string(),
                 relative_path: "dup2.jpg".to_string(),
                 size: 2048,
                 hash: "bbb222".to_string(),
-                is_duplicate: true,
+                match_type: "exact".to_string(),
+                hamming_distance: None,
             },
         ],
+        similar_matches: vec![],
         uniques: vec![
             EvalFile {
                 path: "/eval/unique1.jpg".to_string(),
                 relative_path: "unique1.jpg".to_string(),
                 size: 512,
                 hash: "ccc333".to_string(),
-                is_duplicate: false,
+                match_type: "unique".to_string(),
+                hamming_distance: None,
             },
             EvalFile {
                 path: "/eval/sub/unique2.jpg".to_string(),
                 relative_path: "sub/unique2.jpg".to_string(),
                 size: 768,
                 hash: "ddd444".to_string(),
-                is_duplicate: false,
+                match_type: "unique".to_string(),
+                hamming_distance: None,
             },
         ],
         skipped: 0,
@@ -968,32 +973,29 @@ fn integration_csv_export() {
             ref_file_count: 0,
             eval_file_count: 4,
             total_bytes: 0,
+            perceptual_compare_ms: 0,
         },
     };
 
     // Write CSV using the same logic as export_report
     {
         let mut file = fs::File::create(&csv_path).unwrap();
-        writeln!(file, "status,relative_path,size_bytes,hash").unwrap();
-        for f in &results.duplicates {
+        writeln!(file, "status,relative_path,size_bytes,hash,hamming_distance").unwrap();
+        let all_files = results.exact_matches.iter()
+            .chain(results.similar_matches.iter())
+            .chain(results.uniques.iter());
+        for f in all_files {
+            let dist_str = f.hamming_distance
+                .map(|d| d.to_string())
+                .unwrap_or_default();
             writeln!(
                 file,
-                "{},{},{},{}",
-                "duplicate",
+                "{},{},{},{},{}",
+                commands::csv_quote(&f.match_type),
                 commands::csv_quote(&f.relative_path),
                 f.size,
                 f.hash,
-            )
-            .unwrap();
-        }
-        for f in &results.uniques {
-            writeln!(
-                file,
-                "{},{},{},{}",
-                "unique",
-                commands::csv_quote(&f.relative_path),
-                f.size,
-                f.hash,
+                dist_str,
             )
             .unwrap();
         }
@@ -1005,11 +1007,11 @@ fn integration_csv_export() {
 
     // Header + 4 data rows
     assert_eq!(lines.len(), 5, "Expected 1 header + 4 data rows");
-    assert_eq!(lines[0], "status,relative_path,size_bytes,hash");
+    assert_eq!(lines[0], "status,relative_path,size_bytes,hash,hamming_distance");
 
-    // Verify duplicates come first
-    assert!(lines[1].starts_with("duplicate,"));
-    assert!(lines[2].starts_with("duplicate,"));
+    // Verify exact matches come first
+    assert!(lines[1].starts_with("exact,"));
+    assert!(lines[2].starts_with("exact,"));
     assert!(lines[3].starts_with("unique,"));
     assert!(lines[4].starts_with("unique,"));
 
@@ -1017,4 +1019,509 @@ fn integration_csv_export() {
     assert!(lines[1].contains("dup1.jpg"));
     assert!(lines[1].contains("1024"));
     assert!(lines[1].contains("aaa111"));
+}
+
+// ---------------------------------------------------------------------------
+// perceptual: hamming_distance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hamming_distance_identical() {
+    assert_eq!(crate::perceptual::hamming_distance(0, 0), 0);
+    assert_eq!(crate::perceptual::hamming_distance(u64::MAX, u64::MAX), 0);
+}
+
+#[test]
+fn hamming_distance_one_bit() {
+    assert_eq!(crate::perceptual::hamming_distance(0, 1), 1);
+    assert_eq!(crate::perceptual::hamming_distance(0b1010, 0b1000), 1);
+}
+
+#[test]
+fn hamming_distance_all_bits() {
+    assert_eq!(crate::perceptual::hamming_distance(0, u64::MAX), 64);
+}
+
+#[test]
+fn hamming_distance_known_values() {
+    // 0xFF00 vs 0x00FF: 16 bits differ
+    assert_eq!(crate::perceptual::hamming_distance(0xFF00, 0x00FF), 16);
+}
+
+// ---------------------------------------------------------------------------
+// perceptual: compute_dhash
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dhash_unsupported_format_returns_none() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.txt");
+    fs::write(&file, b"not an image").unwrap();
+    assert!(crate::perceptual::compute_dhash(&file).is_none());
+}
+
+#[test]
+fn dhash_nonexistent_file_returns_none() {
+    assert!(crate::perceptual::compute_dhash(Path::new("/does/not/exist.jpg")).is_none());
+}
+
+#[test]
+fn dhash_deterministic() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.png");
+
+    let mut imgbuf = image::ImageBuffer::new(10, 10);
+    for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+        let val = ((x * 25 + y * 10) % 256) as u8;
+        *pixel = image::Luma([val]);
+    }
+    imgbuf.save(&file).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&file).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&file).unwrap();
+    assert_eq!(hash1, hash2);
+}
+
+#[test]
+fn dhash_similar_images_low_distance() {
+    let dir = TempDir::new().unwrap();
+
+    let mut img1 = image::ImageBuffer::new(100, 100);
+    for (x, _y, pixel) in img1.enumerate_pixels_mut() {
+        let val = ((x * 255) / 99) as u8;
+        *pixel = image::Rgb([val, val, val]);
+    }
+    let path1 = dir.path().join("gradient1.png");
+    img1.save(&path1).unwrap();
+
+    let mut img2 = img1.clone();
+    for (_x, _y, pixel) in img2.enumerate_pixels_mut() {
+        pixel[0] = pixel[0].saturating_add(1);
+    }
+    let path2 = dir.path().join("gradient2.png");
+    img2.save(&path2).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&path1).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&path2).unwrap();
+    let dist = crate::perceptual::hamming_distance(hash1, hash2);
+    assert!(dist <= 5, "Expected similar images to have distance <= 5, got {dist}");
+}
+
+#[test]
+fn dhash_different_images_high_distance() {
+    let dir = TempDir::new().unwrap();
+
+    // Horizontal gradient: pixel values increase left-to-right.
+    // dHash compares left vs right, so left < right => bit 0 for every pair.
+    let img1 = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let path1 = dir.path().join("h_gradient.png");
+    img1.save(&path1).unwrap();
+
+    // Reverse horizontal gradient: pixel values decrease left-to-right.
+    // dHash: left > right => bit 1 for every pair.
+    let img2 = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = (255 - (x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let path2 = dir.path().join("h_gradient_rev.png");
+    img2.save(&path2).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&path1).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&path2).unwrap();
+    let dist = crate::perceptual::hamming_distance(hash1, hash2);
+    assert!(dist > 10, "Expected different images to have distance > 10, got {dist}");
+}
+
+// ---------------------------------------------------------------------------
+// cache: perceptual hash storage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cache_stores_and_retrieves_perceptual_hash() {
+    let cache = HashCache::open_in_memory().unwrap();
+    cache.set(&CachedFile {
+        path: "/photo.jpg".to_string(),
+        hash: "abc123".to_string(),
+        size: 1000,
+        mtime_secs: 100,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: Some(0x123456789ABCDEF0_u64 as i64),
+    }).unwrap();
+
+    let hit = cache.get("/photo.jpg", 1000, 100, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "abc123");
+    assert_eq!(hit.perceptual_hash, Some(0x123456789ABCDEF0_u64));
+}
+
+#[test]
+fn cache_stores_null_perceptual_hash() {
+    let cache = HashCache::open_in_memory().unwrap();
+    cache.set(&CachedFile {
+        path: "/doc.pdf".to_string(),
+        hash: "def456".to_string(),
+        size: 2000,
+        mtime_secs: 200,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: None,
+    }).unwrap();
+
+    let hit = cache.get("/doc.pdf", 2000, 200, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "def456");
+    assert_eq!(hit.perceptual_hash, None);
+}
+
+#[test]
+fn cache_perceptual_hash_high_bit_roundtrip() {
+    let cache = HashCache::open_in_memory().unwrap();
+    let high_val: u64 = 0xFFFFFFFFFFFFFFFF;
+    cache.set(&CachedFile {
+        path: "/high.jpg".to_string(),
+        hash: "ghi789".to_string(),
+        size: 500,
+        mtime_secs: 300,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: Some(high_val as i64),
+    }).unwrap();
+
+    let hit = cache.get("/high.jpg", 500, 300, 0, "sha256").unwrap();
+    assert_eq!(hit.perceptual_hash, Some(high_val));
+}
+
+// ---------------------------------------------------------------------------
+// hash_files_cached: populates perceptual hash for supported images
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_files_cached_computes_perceptual_hash_for_png() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let txt_path = root.join("notes.txt");
+    fs::write(&txt_path, b"hello").unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+    let progress = Arc::new(AtomicUsize::new(0));
+
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let result = hasher::hash_files_cached(
+        &[png_path.clone(), txt_path.clone()],
+        &cache,
+        progress,
+        "sha256",
+        &no_cancel,
+    );
+
+    assert_eq!(result.hashed.len(), 2);
+    let png_file = result.hashed.iter().find(|f| f.path.ends_with("gradient.png")).unwrap();
+    let txt_file = result.hashed.iter().find(|f| f.path.ends_with("notes.txt")).unwrap();
+
+    assert!(png_file.perceptual_hash.is_some());
+    assert!(txt_file.perceptual_hash.is_none());
+}
+
+#[test]
+fn hash_files_cached_perceptual_hash_from_cache() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result1 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
+    let hash1 = result1.hashed[0].perceptual_hash;
+    assert!(hash1.is_some());
+    assert_eq!(result1.cache_hits, 0);
+
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result2 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
+    assert_eq!(result2.cache_hits, 1);
+    assert_eq!(result2.hashed[0].perceptual_hash, hash1);
+}
+
+// ---------------------------------------------------------------------------
+// Integration: perceptual matching end-to-end
+// ---------------------------------------------------------------------------
+
+/// Create two visually similar PNG images in separate folders with different
+/// byte content (different metadata / slight pixel change). Verify the full
+/// hash + perceptual pipeline finds them as "similar" and not "exact".
+#[test]
+fn integration_perceptual_matching_finds_similar_images() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("scan");
+    let ref_dir = root.join("reference");
+    let eval_dir = root.join("eval");
+    fs::create_dir_all(&ref_dir).unwrap();
+    fs::create_dir_all(&eval_dir).unwrap();
+
+    // Reference: a horizontal gradient PNG
+    let img_ref = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let ref_path = ref_dir.join("gradient.png");
+    img_ref.save(&ref_path).unwrap();
+
+    // Eval: same gradient with tiny pixel difference (not byte-identical)
+    let img_eval = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val.saturating_add(1), val, val])
+    });
+    let eval_path = eval_dir.join("gradient_modified.png");
+    img_eval.save(&eval_path).unwrap();
+
+    // Verify they have DIFFERENT content hashes (not exact duplicates)
+    let ref_hash = hasher::hash_file(&ref_path, "sha256").unwrap();
+    let eval_hash = hasher::hash_file(&eval_path, "sha256").unwrap();
+    assert_ne!(ref_hash, eval_hash, "Images should have different content hashes");
+
+    // Verify they have SIMILAR perceptual hashes
+    let ref_phash = crate::perceptual::compute_dhash(&ref_path).unwrap();
+    let eval_phash = crate::perceptual::compute_dhash(&eval_path).unwrap();
+    let dist = crate::perceptual::hamming_distance(ref_phash, eval_phash);
+    assert!(dist <= 10, "Expected perceptually similar images, got distance {dist}");
+
+    // Run the full pipeline: hash both folders
+    let cache = HashCache::open_in_memory().unwrap();
+    let _ = cache.prune();
+
+    let allowed = hasher::resolve_extensions(
+        &["images".to_string()],
+        false,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+
+    let ref_files = hasher::collect_files(&ref_dir, allowed.as_ref());
+    let eval_files = hasher::collect_files(&eval_dir, allowed.as_ref());
+
+    assert_eq!(ref_files.len(), 1);
+    assert_eq!(eval_files.len(), 1);
+
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let ref_progress = Arc::new(AtomicUsize::new(0));
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, "sha256", &no_cancel);
+
+    let eval_progress = Arc::new(AtomicUsize::new(0));
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, "sha256", &no_cancel);
+
+    // Verify perceptual hashes were computed
+    assert!(ref_result.hashed[0].perceptual_hash.is_some(), "Reference should have perceptual hash");
+    assert!(eval_result.hashed[0].perceptual_hash.is_some(), "Eval should have perceptual hash");
+
+    // Build reference hash set for content comparison
+    let ref_hash_set: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
+
+    // Content comparison: should NOT be an exact match
+    let eval_hf = &eval_result.hashed[0];
+    assert!(!ref_hash_set.contains(&eval_hf.hash), "Should not be an exact content match");
+
+    // Perceptual comparison: should find a similar match
+    let ref_phashes: Vec<u64> = ref_result.hashed.iter()
+        .filter_map(|f| f.perceptual_hash)
+        .collect();
+    assert!(!ref_phashes.is_empty(), "Should have reference perceptual hashes");
+
+    let eval_ph = eval_result.hashed[0].perceptual_hash.unwrap();
+    let min_dist = ref_phashes.iter()
+        .map(|&rph| crate::perceptual::hamming_distance(eval_ph, rph))
+        .min()
+        .unwrap();
+
+    assert!(min_dist <= 10, "Should be within Moderate threshold, got {min_dist}");
+}
+
+// ---------------------------------------------------------------------------
+// Backfill: legacy cache entries without perceptual hash get backfilled
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_files_cached_backfills_perceptual_hash_on_legacy_cache_hit() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("scan_root");
+    fs::create_dir(&root).unwrap();
+
+    // Create a PNG image
+    let img = image::ImageBuffer::from_fn(50, 50, |x, _y| {
+        let val = ((x * 255) / 49) as u8;
+        image::Rgb([val, val, val])
+    });
+    let png_path = root.join("gradient.png");
+    img.save(&png_path).unwrap();
+
+    let cache = HashCache::open_in_memory().unwrap();
+
+    // Simulate a legacy cache entry: content hash present, no perceptual hash
+    let path_str = png_path.to_string_lossy().to_string();
+    let meta = fs::metadata(&png_path).unwrap();
+    let mtime = meta.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    cache.set(&CachedFile {
+        path: path_str.clone(),
+        hash: "legacy_hash_abc".to_string(),
+        size: meta.len(),
+        mtime_secs: mtime.as_secs() as i64,
+        mtime_nanos: mtime.subsec_nanos(),
+        algorithm: "sha256".to_string(),
+        perceptual_hash: None,  // <-- legacy: no perceptual hash
+    }).unwrap();
+
+    // Verify cache hit returns None for perceptual hash
+    let hit = cache.get(&path_str, meta.len(), mtime.as_secs() as i64, mtime.subsec_nanos(), "sha256").unwrap();
+    assert_eq!(hit.perceptual_hash, None);
+
+    // Run hash_files_cached — should be a cache hit but backfill the perceptual hash
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let progress = Arc::new(AtomicUsize::new(0));
+    let result = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
+
+    assert_eq!(result.cache_hits, 1, "Should be a cache hit");
+    assert_eq!(result.hashed[0].hash, "legacy_hash_abc", "Content hash from cache");
+    assert!(result.hashed[0].perceptual_hash.is_some(), "Perceptual hash should be backfilled");
+
+    // Verify the cache was updated with the perceptual hash
+    let hit2 = cache.get(&path_str, meta.len(), mtime.as_secs() as i64, mtime.subsec_nanos(), "sha256").unwrap();
+    assert!(hit2.perceptual_hash.is_some(), "Cache should now have the perceptual hash");
+    assert_eq!(hit2.perceptual_hash, result.hashed[0].perceptual_hash);
+}
+
+// ---------------------------------------------------------------------------
+// move_file: returns sidecar warnings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn move_file_returns_empty_warnings_on_success() {
+    let tmp = TempDir::new().unwrap();
+    let eval_dir = tmp.path().join("eval");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&eval_dir).unwrap();
+    fs::create_dir_all(&dest_dir).unwrap();
+
+    fs::write(eval_dir.join("photo.jpg"), b"image data").unwrap();
+    let (final_path, warnings) = fileops::move_file(
+        &eval_dir.join("photo.jpg"), &eval_dir, &dest_dir
+    ).unwrap();
+
+    assert!(final_path.exists());
+    assert!(warnings.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// csv_quote: RFC 4180 field quoting
+// ---------------------------------------------------------------------------
+
+#[test]
+fn csv_quote_no_special_chars() {
+    assert_eq!(commands::csv_quote("hello"), "hello");
+}
+
+#[test]
+fn csv_quote_with_comma() {
+    assert_eq!(commands::csv_quote("hello,world"), "\"hello,world\"");
+}
+
+#[test]
+fn csv_quote_with_double_quotes() {
+    assert_eq!(commands::csv_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+}
+
+#[test]
+fn csv_quote_with_newline() {
+    assert_eq!(commands::csv_quote("line1\nline2"), "\"line1\nline2\"");
+}
+
+#[test]
+fn csv_quote_path_with_comma() {
+    assert_eq!(
+        commands::csv_quote("photos/2024, vacation/IMG_001.jpg"),
+        "\"photos/2024, vacation/IMG_001.jpg\""
+    );
+}
+
+// ---------------------------------------------------------------------------
+// resolve_extensions: custom and removed extensions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolve_extensions_with_custom_addition() {
+    let custom = HashMap::from([("images".to_string(), vec!["cr4".to_string()])]);
+    let removed = HashMap::new();
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(exts.contains("cr4"), "Custom extension should be included");
+    assert!(exts.contains("jpg"), "Default extension should still be present");
+}
+
+#[test]
+fn resolve_extensions_with_removed_default() {
+    let custom = HashMap::new();
+    let removed = HashMap::from([("images".to_string(), vec!["bmp".to_string()])]);
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(!exts.contains("bmp"), "Removed extension should be excluded");
+    assert!(exts.contains("jpg"), "Other defaults should remain");
+}
+
+#[test]
+fn resolve_extensions_custom_and_removed_combined() {
+    let custom = HashMap::from([("images".to_string(), vec!["raw".to_string()])]);
+    let removed = HashMap::from([("images".to_string(), vec!["webp".to_string()])]);
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(exts.contains("raw"));
+    assert!(!exts.contains("webp"));
+    assert!(exts.contains("jpg"));
+}
+
+// ---------------------------------------------------------------------------
+// hash_file: unknown algorithm
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_file_unknown_algorithm_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.txt");
+    fs::write(&file, b"content").unwrap();
+    let result = hasher::hash_file(&file, "blake3");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Unknown hash algorithm"));
+}
+
+// ---------------------------------------------------------------------------
+// cleanup_empty_dirs: .DS_Store handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cleanup_removes_dir_with_only_ds_store() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("root");
+    let subdir = root.join("empty_looking");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join(".DS_Store"), b"junk").unwrap();
+
+    let removed = fileops::cleanup_empty_dirs(&root).unwrap();
+    assert_eq!(removed, 1);
+    assert!(!subdir.exists());
 }
