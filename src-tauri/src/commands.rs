@@ -557,9 +557,18 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
         }
 
         let target = fileops::resolve_collision(&source);
-        let res = fs::rename(&dest, &target).or_else(|_| {
+        let res = fs::rename(&dest, &target).or_else(|rename_err| {
             fs::copy(&dest, &target)
-                .map_err(|e| format!("Failed to copy {} back: {e}", dest.display()))?;
+                .map_err(|e| format!("Failed to restore {} (rename: {rename_err}, copy: {e})", dest.display()))?;
+            let src_size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+            let dst_size = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+            if src_size != dst_size {
+                let _ = fs::remove_file(&target);
+                return Err(format!(
+                    "Copy verification failed restoring {} (src={src_size}, dst={dst_size})",
+                    dest.display()
+                ));
+            }
             fs::remove_file(&dest)
                 .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
             Ok::<(), String>(())

@@ -56,11 +56,22 @@ pub fn move_file(file_path: &Path, base_dir: &Path, dest_dir: &Path) -> Result<P
 
     let sidecars = find_sidecars(file_path);
 
-    fs::rename(file_path, &final_target).or_else(|_| -> Result<(), String> {
-        // fs::rename fails across filesystem boundaries. Fall back to copy + delete,
-        // which is not atomic: if interrupted after copy, the file exists in both locations.
+    fs::rename(file_path, &final_target).or_else(|rename_err| -> Result<(), String> {
+        // fs::rename fails across filesystem boundaries. Fall back to copy + delete.
         fs::copy(file_path, &final_target)
-            .map_err(|e| format!("Failed to copy to {}: {e}", final_target.display()))?;
+            .map_err(|e| format!("Failed to move {} (rename: {rename_err}, copy: {e})", file_path.display()))?;
+
+        // Verify the copy is complete before deleting the source
+        let src_size = fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+        let dst_size = fs::metadata(&final_target).map(|m| m.len()).unwrap_or(0);
+        if src_size != dst_size {
+            let _ = fs::remove_file(&final_target);
+            return Err(format!(
+                "Copy verification failed for {} (src={src_size}, dst={dst_size})",
+                file_path.display()
+            ));
+        }
+
         fs::remove_file(file_path)
             .map_err(|e| format!("Failed to remove source {}: {e}", file_path.display()))?;
         Ok(())
