@@ -2,6 +2,16 @@
 
 A macOS desktop app for **one-way file deduplication**. Point it at your existing library (reference) and a pile of unsorted files (eval) — it hashes everything, finds duplicates, and lets you trash or move them. The reference folder is never modified.
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/setup-light.png" alt="deDuped setup screen (light mode)" width="600" />
+</p>
+
+<p align="center">
+  <img src="screenshots/setup-dark.png" alt="deDuped setup screen (dark mode)" width="600" />
+</p>
+
 ## Why this exists
 
 Every dedup tool does two-way dedup: "find duplicates across these folders." That's dangerous when you have a 60k+ file library and incoming files — you don't want to accidentally flag library copies for deletion.
