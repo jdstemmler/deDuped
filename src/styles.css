@@ -79,6 +79,13 @@ body {
   color: var(--text-secondary);
 }
 
+.build-stamp {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
 /* ── Folder Pickers ──────────────────────────────────── */
 .folder-pickers {
   display: grid;

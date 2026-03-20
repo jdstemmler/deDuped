@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
+  define: {
+    __BUILD_TIMESTAMP__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [react()],
   clearScreen: false,
   server: {
