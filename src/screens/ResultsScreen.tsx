@@ -612,9 +612,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                         : "Done"}
                 </button>
                 {executing && actionTotal > 0 && (
-                  <div className="action-progress">
-                    <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
-                  </div>
+                  <>
+                    <div className="action-progress">
+                      <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
+                    </div>
+                    <button className="btn-link" onClick={() => invoke("cancel_scan")}>Cancel</button>
+                  </>
                 )}
               </div>
             </div>
@@ -633,9 +636,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                       : `Move ${selectedCount} of ${totalMatches} Files`}
                 </button>
                 {executing && actionTotal > 0 && (
-                  <div className="action-progress">
-                    <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
-                  </div>
+                  <>
+                    <div className="action-progress">
+                      <div className="action-progress-fill" style={{ width: `${Math.round((actionCurrent / actionTotal) * 100)}%` }} />
+                    </div>
+                    <button className="btn-link" onClick={() => invoke("cancel_scan")}>Cancel</button>
+                  </>
                 )}
               </div>
             </div>

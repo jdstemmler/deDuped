@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Global cancellation flag for the active scan.
-static SCAN_CANCELLED: std::sync::LazyLock<Arc<AtomicBool>> =
+/// Global cancellation flag for the active scan or action.
+static CANCELLED: std::sync::LazyLock<Arc<AtomicBool>> =
     std::sync::LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 use std::time::{Duration, Instant};
 
@@ -138,7 +138,7 @@ fn spawn_progress_reporter(
 
 #[tauri::command]
 pub async fn cancel_scan() {
-    SCAN_CANCELLED.store(true, Ordering::Relaxed);
+    CANCELLED.store(true, Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -164,8 +164,8 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     // via a oneshot channel.
     let (tx, rx) = tokio::sync::oneshot::channel();
 
-    SCAN_CANCELLED.store(false, Ordering::Relaxed);
-    let cancelled = SCAN_CANCELLED.clone();
+    CANCELLED.store(false, Ordering::Relaxed);
+    let cancelled = CANCELLED.clone();
 
     std::thread::spawn(move || {
         let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config, &cancelled);
@@ -428,8 +428,13 @@ pub async fn execute_action(
     let total = files.len();
 
     let now = iso_now();
+    CANCELLED.store(false, Ordering::Relaxed);
 
     for (idx, file_str) in files.iter().enumerate() {
+        if CANCELLED.load(Ordering::Relaxed) {
+            errors.push(format!("Cancelled after processing {processed} of {total} files"));
+            break;
+        }
         emit_progress(&app, "Processing files...", idx, total);
         let file_path = PathBuf::from(file_str);
         if !file_path.exists() {
