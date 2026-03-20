@@ -987,8 +987,9 @@ body {
 /* ── File List Header (select-all) ──────────────────── */
 .file-list-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -1175,6 +1176,32 @@ body {
 .section-header:first-child {
   border-top: none;
   margin-top: 0;
+}
+
+.filter-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.filter-pill {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filter-pill:hover {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.filter-pill.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
 }
 
 .selection-buttons {

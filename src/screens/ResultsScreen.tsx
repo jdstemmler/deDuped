@@ -55,6 +55,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
     () => new Set(result.exact_matches.map((f) => f.path))
   );
+  const [viewFilter, setViewFilter] = useState<"all" | "exact" | "similar" | "unique">("all");
 
   const exactPaths = result.exact_matches.map((f) => f.path);
   const similarPaths = result.similar_matches.map((f) => f.path);
@@ -338,6 +339,24 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
         <div className="results-files">
           <div className="file-list">
             <div className="file-list-header">
+              <div className="filter-pills">
+                <button className={`filter-pill ${viewFilter === "all" ? "active" : ""}`} onClick={() => setViewFilter("all")}>
+                  All
+                </button>
+                {result.exact_matches.length > 0 && (
+                  <button className={`filter-pill ${viewFilter === "exact" ? "active" : ""}`} onClick={() => setViewFilter("exact")}>
+                    Exact ({result.exact_matches.length})
+                  </button>
+                )}
+                {result.similar_matches.length > 0 && (
+                  <button className={`filter-pill ${viewFilter === "similar" ? "active" : ""}`} onClick={() => setViewFilter("similar")}>
+                    Similar ({result.similar_matches.length})
+                  </button>
+                )}
+                <button className={`filter-pill ${viewFilter === "unique" ? "active" : ""}`} onClick={() => setViewFilter("unique")}>
+                  Unique ({result.uniques.length})
+                </button>
+              </div>
               <div className="selection-buttons">
                 <button className="btn-small" onClick={selectAll}>Select All</button>
                 <button className="btn-small" onClick={selectExact}>Select Exact</button>
@@ -351,9 +370,9 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               </span>
             </div>
             {/* Exact Matches */}
-            {result.exact_matches.length > 0 && (
+            {(viewFilter === "all" || viewFilter === "exact") && result.exact_matches.length > 0 && (
               <>
-                <div className="section-header">Exact Matches</div>
+                {viewFilter === "all" && <div className="section-header">Exact Matches</div>}
                 {result.exact_matches.map((file) => {
                   const isSelected = selectedFiles.has(file.path);
                   return (
@@ -370,9 +389,9 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             )}
 
             {/* Similar Matches */}
-            {result.similar_matches.length > 0 && (
+            {(viewFilter === "all" || viewFilter === "similar") && result.similar_matches.length > 0 && (
               <>
-                <div className="section-header">Similar Matches</div>
+                {viewFilter === "all" && <div className="section-header">Similar Matches</div>}
                 {result.similar_matches.map((file) => {
                   const isSelected = selectedFiles.has(file.path);
                   const similarity = file.hamming_distance != null ? Math.round((64 - file.hamming_distance) / 64 * 100) : null;
@@ -391,9 +410,9 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             )}
 
             {/* Uniques */}
-            {result.uniques.length > 0 && (
+            {(viewFilter === "all" || viewFilter === "unique") && result.uniques.length > 0 && (
               <>
-                <div className="section-header">Unique Files</div>
+                {viewFilter === "all" && <div className="section-header">Unique Files</div>}
                 {result.uniques.map((file) => (
                   <div key={file.path} className={`file-row ${selectedPreview === file.path ? "preview-active" : ""}`}>
                     <span style={{ width: 14, flexShrink: 0 }} />
