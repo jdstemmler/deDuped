@@ -1,12 +1,12 @@
 //! Tauri command handlers: folder scanning, duplicate action execution, and report export.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -25,6 +25,10 @@ pub struct ScanConfig {
     pub categories: Vec<String>,
     pub all_files: bool,
     pub hash_algorithm: String,
+    #[serde(default)]
+    pub custom_extensions: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub removed_extensions: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,11 +40,26 @@ pub enum DupeMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanStats {
+    pub ref_collect_ms: u64,
+    pub ref_hash_ms: u64,
+    pub eval_collect_ms: u64,
+    pub eval_hash_ms: u64,
+    pub total_ms: u64,
+    pub ref_cache_hits: usize,
+    pub eval_cache_hits: usize,
+    pub ref_file_count: usize,
+    pub eval_file_count: usize,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub total_eval: usize,
     pub duplicates: Vec<EvalFile>,
     pub uniques: Vec<EvalFile>,
     pub skipped: usize,
+    pub stats: ScanStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,41 +151,62 @@ fn scan_folders_blocking(
     eval_dir: &Path,
     config: &ScanConfig,
 ) -> Result<ScanResult, String> {
-    let allowed = hasher::resolve_extensions(&config.categories, config.all_files);
+    let scan_start = Instant::now();
+
+    let allowed = hasher::resolve_extensions(
+        &config.categories,
+        config.all_files,
+        &config.custom_extensions,
+        &config.removed_extensions,
+    );
 
     let cache = HashCache::open()?;
     let _ = cache.prune();
 
+    // -- Reference: collect --
     emit_progress(app, "Collecting reference files...", 0, 0);
+    let t0 = Instant::now();
     let ref_files = hasher::collect_files(ref_dir, allowed.as_ref());
-    let ref_total = ref_files.len();
+    let ref_collect_ms = t0.elapsed().as_millis() as u64;
+    let ref_file_count = ref_files.len();
 
+    // -- Reference: hash --
     let ref_progress = Arc::new(AtomicUsize::new(0));
     let reporter = spawn_progress_reporter(
         app.clone(),
         "Hashing reference folder...".to_string(),
         ref_progress.clone(),
-        ref_total,
+        ref_file_count,
     );
 
+    let t0 = Instant::now();
     let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm);
+    let ref_hash_ms = t0.elapsed().as_millis() as u64;
+    let ref_cache_hits = ref_result.cache_hits;
     let _ = reporter.join();
 
     let ref_hashes: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
 
+    // -- Eval: collect --
     emit_progress(app, "Collecting eval files...", 0, 0);
+    let t0 = Instant::now();
     let eval_files = hasher::collect_files(eval_dir, allowed.as_ref());
-    let eval_total = eval_files.len();
+    let eval_collect_ms = t0.elapsed().as_millis() as u64;
+    let eval_file_count = eval_files.len();
 
+    // -- Eval: hash --
     let eval_progress = Arc::new(AtomicUsize::new(0));
     let reporter = spawn_progress_reporter(
         app.clone(),
         "Checking eval folder...".to_string(),
         eval_progress.clone(),
-        eval_total,
+        eval_file_count,
     );
 
+    let t0 = Instant::now();
     let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm);
+    let eval_hash_ms = t0.elapsed().as_millis() as u64;
+    let eval_cache_hits = eval_result.cache_hits;
     let _ = reporter.join();
 
     // Sort by path so intra-eval duplicate detection is deterministic: when two
@@ -175,6 +215,10 @@ fn scan_folders_blocking(
     eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
 
     let skipped = ref_result.skipped.len() + eval_result.skipped.len();
+
+    // Compute total bytes across both phases
+    let total_bytes: u64 = ref_result.hashed.iter().map(|f| f.size).sum::<u64>()
+        + eval_hashed.iter().map(|f| f.size).sum::<u64>();
 
     // Detect intra-eval duplicates: track which hashes we've already seen
     emit_progress(app, "Comparing files...", 0, 0);
@@ -215,11 +259,25 @@ fn scan_folders_blocking(
         }
     }
 
+    let total_ms = scan_start.elapsed().as_millis() as u64;
+
     Ok(ScanResult {
         total_eval: eval_hashed.len(),
         duplicates,
         uniques,
         skipped,
+        stats: ScanStats {
+            ref_collect_ms,
+            ref_hash_ms,
+            eval_collect_ms,
+            eval_hash_ms,
+            total_ms,
+            ref_cache_hits,
+            eval_cache_hits,
+            ref_file_count,
+            eval_file_count,
+            total_bytes,
+        },
     })
 }
 

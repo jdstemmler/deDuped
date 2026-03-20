@@ -7,6 +7,8 @@ export interface ScanConfig {
   categories: string[];
   all_files: boolean;
   hash_algorithm: string;
+  custom_extensions: Record<string, string[]>;
+  removed_extensions: Record<string, string[]>;
 }
 
 export type DupeMode =
@@ -14,11 +16,25 @@ export type DupeMode =
   | { type: "MoveToFolder"; dest: string }
   | { type: "ReviewFirst" };
 
+export interface ScanStats {
+  ref_collect_ms: number;
+  ref_hash_ms: number;
+  eval_collect_ms: number;
+  eval_hash_ms: number;
+  total_ms: number;
+  ref_cache_hits: number;
+  eval_cache_hits: number;
+  ref_file_count: number;
+  eval_file_count: number;
+  total_bytes: number;
+}
+
 export interface ScanResult {
   total_eval: number;
   duplicates: EvalFile[];
   uniques: EvalFile[];
   skipped: number;
+  stats: ScanStats;
 }
 
 export interface EvalFile {

@@ -1,6 +1,6 @@
 //! Unit and integration tests for the core deduplication pipeline.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -98,7 +98,7 @@ fn collect_files_filters_extensions() {
     fs::write(dir.join("video.mp4"), b"mp4").unwrap();
 
     // With an images-only filter, only jpg and png should match
-    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     let files = hasher::collect_files(&dir, Some(&image_exts));
     let names: Vec<String> = files
         .iter()
@@ -511,13 +511,13 @@ fn cache_prune_keeps_existing() {
 
 #[test]
 fn resolve_extensions_all_files_returns_none() {
-    let result = hasher::resolve_extensions(&["images".to_string()], true);
+    let result = hasher::resolve_extensions(&["images".to_string()], true, &HashMap::new(), &HashMap::new());
     assert!(result.is_none());
 }
 
 #[test]
 fn resolve_extensions_single_category() {
-    let result = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     assert!(result.contains("jpg"));
     assert!(result.contains("png"));
     assert!(result.contains("heic"));
@@ -530,6 +530,8 @@ fn resolve_extensions_multiple_categories() {
     let result = hasher::resolve_extensions(
         &["images".to_string(), "videos".to_string()],
         false,
+        &HashMap::new(),
+        &HashMap::new(),
     )
     .unwrap();
     assert!(result.contains("jpg"));
@@ -540,13 +542,13 @@ fn resolve_extensions_multiple_categories() {
 
 #[test]
 fn resolve_extensions_empty_categories() {
-    let result = hasher::resolve_extensions(&[], false).unwrap();
+    let result = hasher::resolve_extensions(&[], false, &HashMap::new(), &HashMap::new()).unwrap();
     assert!(result.is_empty());
 }
 
 #[test]
 fn resolve_extensions_unknown_category_ignored() {
-    let result = hasher::resolve_extensions(&["unknown".to_string()], false).unwrap();
+    let result = hasher::resolve_extensions(&["unknown".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     assert!(result.is_empty());
 }
 
@@ -637,7 +639,7 @@ fn integration_full_scan_finds_duplicates() {
     // 1 intra-eval duplicate (same content as unique_1)
     create_file(&eval_dir, "zzz_intra_dupe.jpg", b"unique_content_1"); // intra-eval dupe
 
-    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     let ref_files = hasher::collect_files(&ref_dir, Some(&image_exts));
     let eval_files = hasher::collect_files(&eval_dir, Some(&image_exts));
 
@@ -687,7 +689,7 @@ fn integration_cache_speeds_up_second_run() {
     create_file(&root, "b.jpg", b"bravo");
     create_file(&root, "c.jpg", b"charlie");
 
-    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     let files = hasher::collect_files(&root, Some(&image_exts));
     assert_eq!(files.len(), 3);
 
@@ -880,7 +882,7 @@ fn integration_category_filtering() {
     create_file(&root, "data.bin", b"binary data");
 
     // Images-only
-    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false, &HashMap::new(), &HashMap::new()).unwrap();
     let image_files = hasher::collect_files(&root, Some(&image_exts));
     let image_names: Vec<String> = image_files
         .iter()
@@ -893,6 +895,8 @@ fn integration_category_filtering() {
     let img_vid_exts = hasher::resolve_extensions(
         &["images".to_string(), "videos".to_string()],
         false,
+        &HashMap::new(),
+        &HashMap::new(),
     )
     .unwrap();
     let img_vid_files = hasher::collect_files(&root, Some(&img_vid_exts));

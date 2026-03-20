@@ -4,6 +4,26 @@ import { listen } from "@tauri-apps/api/event";
 import type { ScanConfig, DupeMode } from "../types";
 
 const LOCAL_STORAGE_KEY = "deduped-last-config";
+const EXT_CUSTOM_KEY = "deduped-custom-extensions";
+const EXT_REMOVED_KEY = "deduped-removed-extensions";
+
+/** Default extensions per category — mirrors the Rust constants in hasher.rs */
+const DEFAULT_EXTENSIONS: Record<string, string[]> = {
+  images: [
+    "jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp", "heic", "heif",
+    "cr2", "cr3", "nef", "arw", "orf", "rw2", "dng", "raf", "pef", "srw", "x3f",
+  ],
+  videos: [
+    "mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv", "webm", "mts", "m2ts",
+  ],
+  documents: [
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "md",
+    "csv", "psd", "ai", "indd", "sketch", "fig",
+  ],
+  audio: [
+    "mp3", "flac", "aac", "wav", "aiff", "ogg", "m4a", "wma", "alac",
+  ],
+};
 
 interface SavedConfig {
   reference_dir: string;
@@ -29,6 +49,20 @@ function loadSavedConfig(): SavedConfig | null {
 
 function saveSavedConfig(config: SavedConfig): void {
   localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(config));
+}
+
+function loadRecord(key: string): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+
+function saveRecord(key: string, value: Record<string, string[]>): void {
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function initialDupeMode(initialConfig: ScanConfig | null, saved: SavedConfig | null): "trash" | "move" | "review" {
@@ -84,8 +118,27 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     initialConfig?.hash_algorithm ?? saved?.hashAlgorithm ?? "sha256"
   );
 
+  const [customExtensions, setCustomExtensions] = useState<Record<string, string[]>>(
+    () => initialConfig?.custom_extensions ?? loadRecord(EXT_CUSTOM_KEY)
+  );
+  const [removedExtensions, setRemovedExtensions] = useState<Record<string, string[]>>(
+    () => initialConfig?.removed_extensions ?? loadRecord(EXT_REMOVED_KEY)
+  );
+
+  const [customizerOpen, setCustomizerOpen] = useState(false);
+  const [extInput, setExtInput] = useState("");
+
   const [dragOver, setDragOver] = useState<"reference" | "eval" | null>(null);
   const dragOverRef = useRef<"reference" | "eval" | null>(null);
+
+  // Persist extension customizations to localStorage
+  useEffect(() => {
+    saveRecord(EXT_CUSTOM_KEY, customExtensions);
+  }, [customExtensions]);
+
+  useEffect(() => {
+    saveRecord(EXT_REMOVED_KEY, removedExtensions);
+  }, [removedExtensions]);
 
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
@@ -154,9 +207,114 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
       categories: Array.from(selectedCategories),
       all_files: allFiles,
       hash_algorithm: hashAlgorithm,
+      custom_extensions: customExtensions,
+      removed_extensions: removedExtensions,
     });
   };
 
+  // --- Extension customization helpers ---
+
+  /** Compute the visible extension list for all selected categories */
+  const buildExtensionList = () => {
+    const entries: { ext: string; category: string; kind: "default" | "custom" | "removed" }[] = [];
+    const seen = new Set<string>();
+
+    for (const cat of selectedCategories) {
+      const defaults = DEFAULT_EXTENSIONS[cat] ?? [];
+      const removed = new Set((removedExtensions[cat] ?? []).map((e) => e.toLowerCase()));
+      const custom = (customExtensions[cat] ?? []).map((e) => e.toLowerCase());
+
+      for (const ext of defaults) {
+        if (seen.has(ext)) continue;
+        seen.add(ext);
+        if (removed.has(ext)) {
+          entries.push({ ext, category: cat, kind: "removed" });
+        } else {
+          entries.push({ ext, category: cat, kind: "default" });
+        }
+      }
+
+      for (const ext of custom) {
+        if (seen.has(ext)) continue;
+        seen.add(ext);
+        entries.push({ ext, category: cat, kind: "custom" });
+      }
+    }
+
+    return entries;
+  };
+
+  const handleRemoveExtension = (ext: string, category: string, kind: "default" | "custom") => {
+    if (kind === "custom") {
+      // Remove from customExtensions
+      setCustomExtensions((prev) => {
+        const list = (prev[category] ?? []).filter((e) => e.toLowerCase() !== ext.toLowerCase());
+        const next = { ...prev };
+        if (list.length === 0) {
+          delete next[category];
+        } else {
+          next[category] = list;
+        }
+        return next;
+      });
+    } else {
+      // Add to removedExtensions
+      setRemovedExtensions((prev) => {
+        const list = prev[category] ?? [];
+        if (list.some((e) => e.toLowerCase() === ext.toLowerCase())) return prev;
+        return { ...prev, [category]: [...list, ext.toLowerCase()] };
+      });
+    }
+  };
+
+  const handleUndoRemove = (ext: string, category: string) => {
+    setRemovedExtensions((prev) => {
+      const list = (prev[category] ?? []).filter((e) => e.toLowerCase() !== ext.toLowerCase());
+      const next = { ...prev };
+      if (list.length === 0) {
+        delete next[category];
+      } else {
+        next[category] = list;
+      }
+      return next;
+    });
+  };
+
+  const handleAddExtension = (raw: string) => {
+    const ext = raw.toLowerCase().replace(/^\.+/, "").trim();
+    if (!ext) return;
+
+    // Add to the first selected category
+    const categories = Array.from(selectedCategories);
+    if (categories.length === 0) return;
+    const targetCat = categories[0];
+
+    // Check if it's already a default for any selected category
+    for (const cat of categories) {
+      const defaults = DEFAULT_EXTENSIONS[cat] ?? [];
+      if (defaults.includes(ext)) {
+        // If it was removed, undo the removal instead
+        const removed = removedExtensions[cat] ?? [];
+        if (removed.some((e) => e.toLowerCase() === ext)) {
+          handleUndoRemove(ext, cat);
+        }
+        return;
+      }
+    }
+
+    // Check if already in custom for any selected category
+    for (const cat of categories) {
+      const custom = (customExtensions[cat] ?? []).map((e) => e.toLowerCase());
+      if (custom.includes(ext)) return; // already exists
+    }
+
+    setCustomExtensions((prev) => {
+      const list = prev[targetCat] ?? [];
+      return { ...prev, [targetCat]: [...list, ext] };
+    });
+  };
+
+  const extensionEntries = buildExtensionList();
   const showCategoryWarning = !allFiles && selectedCategories.size === 0;
 
   return (
@@ -229,6 +387,63 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
           <div className="category-warning">Select at least one file type to scan</div>
         )}
 
+        {!allFiles && selectedCategories.size > 0 && (
+          <div className="extension-customizer">
+            <button
+              className="customize-toggle"
+              onClick={() => setCustomizerOpen((prev) => !prev)}
+            >
+              {customizerOpen ? "Hide extensions" : "Customize extensions..."}
+            </button>
+            {customizerOpen && (
+              <>
+                <div className="extension-tags">
+                  {extensionEntries.map(({ ext, category, kind }) =>
+                    kind === "removed" ? (
+                      <span key={`${category}-${ext}`} className="extension-tag removed">
+                        <span className="ext-text">.{ext}</span>
+                        <button
+                          className="ext-undo"
+                          onClick={() => handleUndoRemove(ext, category)}
+                          title="Restore"
+                        >
+                          undo
+                        </button>
+                      </span>
+                    ) : (
+                      <span
+                        key={`${category}-${ext}`}
+                        className={`extension-tag ${kind === "custom" ? "custom" : ""}`}
+                      >
+                        <span className="ext-text">.{ext}</span>
+                        <button
+                          className="ext-remove"
+                          onClick={() => handleRemoveExtension(ext, category, kind)}
+                          title="Remove"
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    )
+                  )}
+                </div>
+                <input
+                  type="text"
+                  className="extension-input"
+                  placeholder="Add extension..."
+                  value={extInput}
+                  onChange={(e) => setExtInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleAddExtension(extInput);
+                      setExtInput("");
+                    }
+                  }}
+                />
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="config-section">
@@ -269,7 +484,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             />
             <div>
               <strong>Review first</strong>
-              <span className="radio-desc">Scan only — decide after seeing results</span>
+              <span className="radio-desc">Scan only -- decide after seeing results</span>
             </div>
           </label>
         </div>
