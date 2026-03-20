@@ -997,3 +997,52 @@ body {
   border-left: 3px solid var(--accent-red);
   padding-left: 13px;
 }
+
+/* ── Scan Stats Panel ───────────────────────────────── */
+.stats-section {
+  margin-top: 4px;
+}
+
+.stats-toggle {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.15s ease;
+}
+
+.stats-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.stats-panel {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.stats-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.stats-label {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stats-value {
+  text-align: right;
+  color: var(--text-secondary);
+  filter: brightness(1.15);
+}
