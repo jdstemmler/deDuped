@@ -1255,3 +1255,95 @@ fn hash_files_cached_perceptual_hash_from_cache() {
     assert_eq!(result2.cache_hits, 1);
     assert_eq!(result2.hashed[0].perceptual_hash, hash1);
 }
+
+// ---------------------------------------------------------------------------
+// Integration: perceptual matching end-to-end
+// ---------------------------------------------------------------------------
+
+/// Create two visually similar PNG images in separate folders with different
+/// byte content (different metadata / slight pixel change). Verify the full
+/// hash + perceptual pipeline finds them as "similar" and not "exact".
+#[test]
+fn integration_perceptual_matching_finds_similar_images() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("scan");
+    let ref_dir = root.join("reference");
+    let eval_dir = root.join("eval");
+    fs::create_dir_all(&ref_dir).unwrap();
+    fs::create_dir_all(&eval_dir).unwrap();
+
+    // Reference: a horizontal gradient PNG
+    let img_ref = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let ref_path = ref_dir.join("gradient.png");
+    img_ref.save(&ref_path).unwrap();
+
+    // Eval: same gradient with tiny pixel difference (not byte-identical)
+    let img_eval = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val.saturating_add(1), val, val])
+    });
+    let eval_path = eval_dir.join("gradient_modified.png");
+    img_eval.save(&eval_path).unwrap();
+
+    // Verify they have DIFFERENT content hashes (not exact duplicates)
+    let ref_hash = hasher::hash_file(&ref_path, "sha256").unwrap();
+    let eval_hash = hasher::hash_file(&eval_path, "sha256").unwrap();
+    assert_ne!(ref_hash, eval_hash, "Images should have different content hashes");
+
+    // Verify they have SIMILAR perceptual hashes
+    let ref_phash = crate::perceptual::compute_dhash(&ref_path).unwrap();
+    let eval_phash = crate::perceptual::compute_dhash(&eval_path).unwrap();
+    let dist = crate::perceptual::hamming_distance(ref_phash, eval_phash);
+    assert!(dist <= 10, "Expected perceptually similar images, got distance {dist}");
+
+    // Run the full pipeline: hash both folders
+    let cache = HashCache::open_in_memory().unwrap();
+    let _ = cache.prune();
+
+    let allowed = hasher::resolve_extensions(
+        &["images".to_string()],
+        false,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+
+    let ref_files = hasher::collect_files(&ref_dir, allowed.as_ref());
+    let eval_files = hasher::collect_files(&eval_dir, allowed.as_ref());
+
+    assert_eq!(ref_files.len(), 1);
+    assert_eq!(eval_files.len(), 1);
+
+    let ref_progress = Arc::new(AtomicUsize::new(0));
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, "sha256");
+
+    let eval_progress = Arc::new(AtomicUsize::new(0));
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, "sha256");
+
+    // Verify perceptual hashes were computed
+    assert!(ref_result.hashed[0].perceptual_hash.is_some(), "Reference should have perceptual hash");
+    assert!(eval_result.hashed[0].perceptual_hash.is_some(), "Eval should have perceptual hash");
+
+    // Build reference hash set for content comparison
+    let ref_hash_set: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
+
+    // Content comparison: should NOT be an exact match
+    let eval_hf = &eval_result.hashed[0];
+    assert!(!ref_hash_set.contains(&eval_hf.hash), "Should not be an exact content match");
+
+    // Perceptual comparison: should find a similar match
+    let ref_phashes: Vec<u64> = ref_result.hashed.iter()
+        .filter_map(|f| f.perceptual_hash)
+        .collect();
+    assert!(!ref_phashes.is_empty(), "Should have reference perceptual hashes");
+
+    let eval_ph = eval_result.hashed[0].perceptual_hash.unwrap();
+    let min_dist = ref_phashes.iter()
+        .map(|&rph| crate::perceptual::hamming_distance(eval_ph, rph))
+        .min()
+        .unwrap();
+
+    assert!(min_dist <= 10, "Should be within Moderate threshold, got {min_dist}");
+}
