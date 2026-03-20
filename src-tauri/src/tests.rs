@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -647,12 +647,13 @@ fn integration_full_scan_finds_duplicates() {
     let cache = HashCache::open_in_memory().unwrap();
     let progress = Arc::new(AtomicUsize::new(0));
 
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, progress.clone(), "sha256");
+    let no_cancel = Arc::new(AtomicBool::new(false));
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, progress.clone(), "sha256", &no_cancel);
     assert_eq!(ref_result.hashed.len(), 3);
     assert!(ref_result.skipped.is_empty());
 
     let progress2 = Arc::new(AtomicUsize::new(0));
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, progress2, "sha256");
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, progress2, "sha256", &no_cancel);
     assert_eq!(eval_result.hashed.len(), 5);
     assert!(eval_result.skipped.is_empty());
 
@@ -694,8 +695,9 @@ fn integration_cache_speeds_up_second_run() {
     let cache = HashCache::open_in_memory().unwrap();
 
     // First run: everything should be hashed (no cache hits)
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let progress1 = Arc::new(AtomicUsize::new(0));
-    let result1 = hasher::hash_files_cached(&files, &cache, progress1, "sha256");
+    let result1 = hasher::hash_files_cached(&files, &cache, progress1, "sha256", &no_cancel);
     assert_eq!(result1.hashed.len(), 3);
     assert!(result1.skipped.is_empty());
 
@@ -711,7 +713,7 @@ fn integration_cache_speeds_up_second_run() {
     // the result which should be identical. The internal `needs_hashing` vec
     // should be empty because all files are in cache with matching metadata.
     let progress2 = Arc::new(AtomicUsize::new(0));
-    let result2 = hasher::hash_files_cached(&files, &cache, progress2.clone(), "sha256");
+    let result2 = hasher::hash_files_cached(&files, &cache, progress2.clone(), "sha256", &no_cancel);
     assert_eq!(result2.hashed.len(), 3);
     assert!(result2.skipped.is_empty());
 
@@ -1214,11 +1216,13 @@ fn hash_files_cached_computes_perceptual_hash_for_png() {
     let cache = HashCache::open_in_memory().unwrap();
     let progress = Arc::new(AtomicUsize::new(0));
 
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let result = hasher::hash_files_cached(
         &[png_path.clone(), txt_path.clone()],
         &cache,
         progress,
         "sha256",
+        &no_cancel,
     );
 
     assert_eq!(result.hashed.len(), 2);
@@ -1244,14 +1248,15 @@ fn hash_files_cached_perceptual_hash_from_cache() {
 
     let cache = HashCache::open_in_memory().unwrap();
 
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let progress = Arc::new(AtomicUsize::new(0));
-    let result1 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+    let result1 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
     let hash1 = result1.hashed[0].perceptual_hash;
     assert!(hash1.is_some());
     assert_eq!(result1.cache_hits, 0);
 
     let progress = Arc::new(AtomicUsize::new(0));
-    let result2 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+    let result2 = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
     assert_eq!(result2.cache_hits, 1);
     assert_eq!(result2.hashed[0].perceptual_hash, hash1);
 }
@@ -1316,11 +1321,12 @@ fn integration_perceptual_matching_finds_similar_images() {
     assert_eq!(ref_files.len(), 1);
     assert_eq!(eval_files.len(), 1);
 
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let ref_progress = Arc::new(AtomicUsize::new(0));
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, "sha256");
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, "sha256", &no_cancel);
 
     let eval_progress = Arc::new(AtomicUsize::new(0));
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, "sha256");
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, "sha256", &no_cancel);
 
     // Verify perceptual hashes were computed
     assert!(ref_result.hashed[0].perceptual_hash.is_some(), "Reference should have perceptual hash");
@@ -1387,8 +1393,9 @@ fn hash_files_cached_backfills_perceptual_hash_on_legacy_cache_hit() {
     assert_eq!(hit.perceptual_hash, None);
 
     // Run hash_files_cached — should be a cache hit but backfill the perceptual hash
+    let no_cancel = Arc::new(AtomicBool::new(false));
     let progress = Arc::new(AtomicUsize::new(0));
-    let result = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256");
+    let result = hasher::hash_files_cached(&[png_path.clone()], &cache, progress, "sha256", &no_cancel);
 
     assert_eq!(result.cache_hits, 1, "Should be a cache hit");
     assert_eq!(result.hashed[0].hash, "legacy_hash_abc", "Content hash from cache");

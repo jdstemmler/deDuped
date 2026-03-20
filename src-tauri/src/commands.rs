@@ -5,8 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// Global cancellation flag for the active scan.
+static SCAN_CANCELLED: std::sync::LazyLock<Arc<AtomicBool>> =
+    std::sync::LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -133,6 +137,11 @@ fn spawn_progress_reporter(
 }
 
 #[tauri::command]
+pub async fn cancel_scan() {
+    SCAN_CANCELLED.store(true, Ordering::Relaxed);
+}
+
+#[tauri::command]
 pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResult, String> {
     let ref_dir = PathBuf::from(&config.reference_dir);
     let eval_dir = PathBuf::from(&config.eval_dir);
@@ -155,8 +164,11 @@ pub async fn scan_folders(config: ScanConfig, app: AppHandle) -> Result<ScanResu
     // via a oneshot channel.
     let (tx, rx) = tokio::sync::oneshot::channel();
 
+    SCAN_CANCELLED.store(false, Ordering::Relaxed);
+    let cancelled = SCAN_CANCELLED.clone();
+
     std::thread::spawn(move || {
-        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config);
+        let result = scan_folders_blocking(&app, &ref_dir, &eval_dir, &config, &cancelled);
         let _ = tx.send(result);
     });
 
@@ -168,6 +180,7 @@ fn scan_folders_blocking(
     ref_dir: &Path,
     eval_dir: &Path,
     config: &ScanConfig,
+    cancelled: &Arc<AtomicBool>,
 ) -> Result<ScanResult, String> {
     let scan_start = Instant::now();
 
@@ -190,6 +203,10 @@ fn scan_folders_blocking(
     let ref_collect_ms = t0.elapsed().as_millis() as u64;
     let ref_file_count = ref_files.len();
 
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
+
     // -- Reference: hash --
     let ref_progress = Arc::new(AtomicUsize::new(0));
     let reporter = spawn_progress_reporter(
@@ -200,10 +217,14 @@ fn scan_folders_blocking(
     );
 
     let t0 = Instant::now();
-    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm);
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm, cancelled);
     let ref_hash_ms = t0.elapsed().as_millis() as u64;
     let ref_cache_hits = ref_result.cache_hits;
     let _ = reporter.join();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     let ref_hashes: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
 
@@ -213,6 +234,10 @@ fn scan_folders_blocking(
     let eval_files = hasher::collect_files(eval_dir, allowed.as_ref());
     let eval_collect_ms = t0.elapsed().as_millis() as u64;
     let eval_file_count = eval_files.len();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     // -- Eval: hash --
     let eval_progress = Arc::new(AtomicUsize::new(0));
@@ -224,10 +249,14 @@ fn scan_folders_blocking(
     );
 
     let t0 = Instant::now();
-    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm);
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, eval_progress, &config.hash_algorithm, cancelled);
     let eval_hash_ms = t0.elapsed().as_millis() as u64;
     let eval_cache_hits = eval_result.cache_hits;
     let _ = reporter.join();
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Scan cancelled".to_string());
+    }
 
     // Sort by path so intra-eval duplicate detection is deterministic: when two
     // eval files share a hash, the lexicographically-first path is kept as "unique."

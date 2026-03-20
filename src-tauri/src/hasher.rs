@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::Xxh3;
@@ -209,13 +209,17 @@ pub fn hash_files_cached(
     cache: &HashCache,
     progress: Arc<AtomicUsize>,
     algorithm: &str,
+    cancelled: &Arc<AtomicBool>,
 ) -> HashResult {
     let mut results: Vec<HashedFile> = Vec::with_capacity(files.len());
     let mut needs_hashing: Vec<FileMeta> = Vec::new();
     let mut skipped: Vec<SkippedFile> = Vec::new();
     let mut cache_hits: usize = 0;
 
-    for path in files {
+    for (idx, path) in files.iter().enumerate() {
+        if idx % 100 == 0 && cancelled.load(Ordering::Relaxed) {
+            break;
+        }
         let path_str = path.to_string_lossy().to_string();
         let meta = match file_meta(path) {
             Ok(m) => m,
@@ -273,9 +277,13 @@ pub fn hash_files_cached(
     // Hash cache misses in parallel
     let algo = algorithm.to_string();
     let progress_clone = progress.clone();
+    let cancelled_clone = cancelled.clone();
     let newly_hashed: Vec<Result<(FileMeta, String, Option<u64>), SkippedFile>> = needs_hashing
         .into_par_iter()
         .map(|fm| {
+            if cancelled_clone.load(Ordering::Relaxed) {
+                return Err(SkippedFile { path: fm.path_str.clone(), reason: "Cancelled".to_string() });
+            }
             match hash_file(&fm.path, &algo) {
                 Ok(hash) => {
                     let phash = if supports_perceptual_hash(&fm.path) {

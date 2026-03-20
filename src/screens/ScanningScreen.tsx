@@ -52,6 +52,15 @@ export default function ScanningScreen({ config, onComplete, onBack }: Props) {
     };
   }, []);
 
+  const handleCancel = async () => {
+    try {
+      await invoke("cancel_scan");
+    } catch {
+      // Best-effort cancellation
+    }
+    onBack();
+  };
+
   if (error) {
     return (
       <div className="scanning">
@@ -80,7 +89,7 @@ export default function ScanningScreen({ config, onComplete, onBack }: Props) {
           [{current.toLocaleString()} / {total.toLocaleString()}]
         </span>
       </div>
-      <button className="btn-link" onClick={onBack}>Cancel</button>
+      <button className="btn-link" onClick={handleCancel}>Cancel</button>
     </div>
   );
 }
