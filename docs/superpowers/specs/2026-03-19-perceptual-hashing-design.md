@@ -103,7 +103,7 @@ Cache key unchanged: `(path, algorithm)`. Staleness logic unchanged (invalidate 
 - `exact_matches: Vec<EvalFile>`
 - `similar_matches: Vec<EvalFile>`
 - `uniques: Vec<EvalFile>`
-- `total_eval` retained
+- `total_eval`, `skipped`, `stats` retained
 
 **`ScanStats`** gains:
 - `perceptual_hash_ms: u64` — time to compute perceptual hashes (0 when disabled)
@@ -140,6 +140,11 @@ Cache key unchanged: `(path, algorithm)`. Staleness logic unchanged (invalidate 
 - `exact_matches: EvalFile[]`
 - `similar_matches: EvalFile[]`
 - `uniques: EvalFile[]`
+- `total_eval`, `skipped`, `stats` retained
+
+**`ScanStats`** gains:
+- `perceptual_hash_ms: number` (0 when disabled)
+- `perceptual_compare_ms: number` (0 when disabled)
 
 ### SetupScreen: `src/screens/SetupScreen.tsx`
 
@@ -171,7 +176,9 @@ New "Perceptual Matching" section below hash algorithm selector:
 - "Select Similar" — selects only similar matches
 - `selectedFiles` remains a single `Set<string>`. Each button sets it to the appropriate subset.
 
-**Actions** apply to all selected files regardless of match type.
+**Initial selection state:** Default to selecting only exact matches (not similar). Similar matches should require explicit user action to select, since they carry higher false-positive risk.
+
+**Actions** apply to all selected files regardless of match type. `handleConfirmAction` filters from `[...result.exact_matches, ...result.similar_matches]` instead of `result.duplicates`.
 
 **Frontend references** to `is_duplicate` and `result.duplicates` replaced:
 - `is_duplicate` checks become `match_type !== "unique"`
