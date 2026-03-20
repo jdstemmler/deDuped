@@ -43,6 +43,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [selectedPreview, setSelectedPreview] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<FilePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Undo state
   const [lastActionType, setLastActionType] = useState<string | null>(null);
@@ -83,12 +84,14 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     }
     setSelectedPreview(path);
     setPreviewData(null);
+    setPreviewError(null);
     setPreviewLoading(true);
     try {
       const data = await invoke<FilePreview>("get_file_preview", { path });
       setPreviewData(data);
-    } catch {
+    } catch (err) {
       setPreviewData(null);
+      setPreviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setPreviewLoading(false);
     }
@@ -279,6 +282,56 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     );
   }
 
+  const statsPanel = statsOpen ? (() => {
+    const s = result.stats;
+    const totalFiles = s.ref_file_count + s.eval_file_count;
+    const totalCacheHits = s.ref_cache_hits + s.eval_cache_hits;
+    const cacheRate = totalFiles > 0 ? ((totalCacheHits / totalFiles) * 100).toFixed(1) : "0.0";
+    const throughputMBs = s.total_ms > 0
+      ? ((s.total_bytes / (1024 * 1024)) / (s.total_ms / 1000)).toFixed(1)
+      : "0.0";
+    return (
+      <div className="stats-panel">
+        <div className="stats-row">
+          <span className="stats-label">Total time</span>
+          <span className="stats-value">{formatTime(s.total_ms)}</span>
+        </div>
+        <div className="stats-row">
+          <span className="stats-label">Reference</span>
+          <span className="stats-value">
+            {s.ref_file_count.toLocaleString()} files ({formatTime(s.ref_collect_ms)}),{" "}
+            {s.ref_cache_hits.toLocaleString()} cache hits ({formatTime(s.ref_hash_ms)})
+          </span>
+        </div>
+        <div className="stats-row">
+          <span className="stats-label">Eval</span>
+          <span className="stats-value">
+            {s.eval_file_count.toLocaleString()} files ({formatTime(s.eval_collect_ms)}),{" "}
+            {s.eval_cache_hits.toLocaleString()} cache hits ({formatTime(s.eval_hash_ms)})
+          </span>
+        </div>
+        {s.perceptual_compare_ms > 0 && (
+          <div className="stats-row">
+            <span className="stats-label">Perceptual</span>
+            <span className="stats-value">Compare: {formatTime(s.perceptual_compare_ms)}</span>
+          </div>
+        )}
+        <div className="stats-row">
+          <span className="stats-label">Throughput</span>
+          <span className="stats-value">{throughputMBs} MB/s</span>
+        </div>
+        <div className="stats-row">
+          <span className="stats-label">Cache hit rate</span>
+          <span className="stats-value">{cacheRate}%</span>
+        </div>
+        <div className="stats-row">
+          <span className="stats-label">Total data</span>
+          <span className="stats-value">{formatSize(s.total_bytes)}</span>
+        </div>
+      </div>
+    );
+  })() : null;
+
   return (
     <div className="results">
       <div className="results-layout">
@@ -434,7 +487,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   </div>
                 </>
               ) : (
-                <div className="preview-info">Failed to load preview</div>
+                <div className="preview-info">{previewError || "Failed to load preview"}</div>
               )}
             </div>
           )}
@@ -513,55 +566,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
             <button className="stats-toggle" onClick={() => setStatsOpen(!statsOpen)}>
               Scan stats {statsOpen ? "\u25BE" : "\u25B8"}
             </button>
-            {statsOpen && (() => {
-              const s = result.stats;
-              const totalFiles = s.ref_file_count + s.eval_file_count;
-              const totalCacheHits = s.ref_cache_hits + s.eval_cache_hits;
-              const cacheRate = totalFiles > 0 ? ((totalCacheHits / totalFiles) * 100).toFixed(1) : "0.0";
-              const throughputMBs = s.total_ms > 0
-                ? ((s.total_bytes / (1024 * 1024)) / (s.total_ms / 1000)).toFixed(1)
-                : "0.0";
-              return (
-                <div className="stats-panel">
-                  <div className="stats-row">
-                    <span className="stats-label">Total time</span>
-                    <span className="stats-value">{formatTime(s.total_ms)}</span>
-                  </div>
-                  <div className="stats-row">
-                    <span className="stats-label">Reference</span>
-                    <span className="stats-value">
-                      {s.ref_file_count.toLocaleString()} files ({formatTime(s.ref_collect_ms)}),{" "}
-                      {s.ref_cache_hits.toLocaleString()} cache hits ({formatTime(s.ref_hash_ms)})
-                    </span>
-                  </div>
-                  <div className="stats-row">
-                    <span className="stats-label">Eval</span>
-                    <span className="stats-value">
-                      {s.eval_file_count.toLocaleString()} files ({formatTime(s.eval_collect_ms)}),{" "}
-                      {s.eval_cache_hits.toLocaleString()} cache hits ({formatTime(s.eval_hash_ms)})
-                    </span>
-                  </div>
-                  {s.perceptual_compare_ms > 0 && (
-                    <div className="stats-row">
-                      <span className="stats-label">Perceptual</span>
-                      <span className="stats-value">Compare: {formatTime(s.perceptual_compare_ms)}</span>
-                    </div>
-                  )}
-                  <div className="stats-row">
-                    <span className="stats-label">Throughput</span>
-                    <span className="stats-value">{throughputMBs} MB/s</span>
-                  </div>
-                  <div className="stats-row">
-                    <span className="stats-label">Cache hit rate</span>
-                    <span className="stats-value">{cacheRate}%</span>
-                  </div>
-                  <div className="stats-row">
-                    <span className="stats-label">Total data</span>
-                    <span className="stats-value">{formatSize(s.total_bytes)}</span>
-                  </div>
-                </div>
-              );
-            })()}
+            {statsPanel}
           </div>
 
           <button className="btn-link" onClick={onNewScan}>&larr; New Scan</button>

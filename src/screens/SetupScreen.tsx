@@ -44,7 +44,8 @@ function loadSavedConfig(): SavedConfig | null {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as SavedConfig;
-  } catch {
+  } catch (err) {
+    console.warn("Failed to load saved config:", err);
     return null;
   }
 }
@@ -58,7 +59,8 @@ function loadRecord(key: string): Record<string, string[]> {
     const raw = localStorage.getItem(key);
     if (!raw) return {};
     return JSON.parse(raw) as Record<string, string[]>;
-  } catch {
+  } catch (err) {
+    console.warn("Failed to load saved record:", err);
     return {};
   }
 }
