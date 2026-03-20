@@ -756,8 +756,6 @@ pub async fn export_report(
 
 // ── File Preview ────────────────────────────────────────
 
-/// Maximum file size (5 MB) for which we'll generate a thumbnail.
-const MAX_THUMBNAIL_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FilePreview {
@@ -800,10 +798,24 @@ fn mime_from_extension(ext: &str) -> &'static str {
     }
 }
 
-/// Whether the extension is one we can turn into a base64 thumbnail
-/// (formats browsers can display natively in an <img> tag).
+/// Whether the extension is one the `image` crate can decode for thumbnail generation.
 fn can_thumbnail(ext: &str) -> bool {
     matches!(ext, "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tif" | "tiff")
+}
+
+/// Maximum thumbnail dimension (width or height) in pixels.
+const THUMBNAIL_MAX_DIM: u32 = 800;
+
+/// Decode an image, resize it to fit within THUMBNAIL_MAX_DIM, and return
+/// a JPEG-encoded base64 data URI. Works for any format the `image` crate
+/// supports, regardless of file size.
+fn generate_thumbnail(file_path: &Path) -> Option<String> {
+    let img = image::open(file_path).ok()?;
+    let thumb = img.thumbnail(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM);
+    let mut buf = std::io::Cursor::new(Vec::new());
+    thumb.write_to(&mut buf, image::ImageFormat::Jpeg).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+    Some(format!("data:image/jpeg;base64,{b64}"))
 }
 
 #[tauri::command]
@@ -826,16 +838,8 @@ pub async fn get_file_preview(path: String) -> Result<FilePreview, String> {
     let mime_type = mime_from_extension(&ext).to_string();
     let is_image = mime_type.starts_with("image/");
 
-    let thumbnail_data = if can_thumbnail(&ext) && size <= MAX_THUMBNAIL_BYTES {
-        let mut file = fs::File::open(&file_path)
-            .map_err(|e| format!("Failed to open file: {e}"))?;
-        let mut buf = Vec::with_capacity(size as usize);
-        file.read_to_end(&mut buf)
-            .map_err(|e| format!("Failed to read file: {e}"))?;
-
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-        let data_uri = format!("data:{};base64,{}", mime_type, b64);
-        Some(data_uri)
+    let thumbnail_data = if can_thumbnail(&ext) {
+        generate_thumbnail(&file_path)
     } else {
         None
     };
