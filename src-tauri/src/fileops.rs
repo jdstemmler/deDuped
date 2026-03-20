@@ -36,7 +36,12 @@ pub fn trash_file(path: &Path) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     for sidecar in sidecars {
         if let Err(e) = trash::delete(&sidecar) {
-            warnings.push(format!("Sidecar {} could not be trashed: {e}", sidecar.display()));
+            // On external volumes, trash::delete may report an error even when
+            // the file was successfully moved to .Trashes. Only warn if the
+            // sidecar still exists on disk.
+            if sidecar.exists() {
+                warnings.push(format!("Sidecar {} could not be trashed: {e}", sidecar.display()));
+            }
         }
     }
     Ok(warnings)
