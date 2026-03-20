@@ -610,7 +610,22 @@ pub async fn undo_last_action() -> Result<ActionResult, String> {
     };
 
     let batch_id = batch.id.clone();
-    log.remove_batch(&batch_id)?;
+    if errors.is_empty() {
+        // All entries restored — remove the batch
+        log.remove_batch(&batch_id)?;
+    } else if processed > 0 {
+        // Partial undo — keep only entries whose destination still exists (not restored)
+        let remaining: Vec<_> = batch.entries.iter()
+            .filter(|entry| {
+                entry.dest_path.as_ref()
+                    .map(|d| std::path::Path::new(d).exists())
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+        log.update_entries(&batch_id, remaining)?;
+    }
+    // If processed == 0, leave the batch as-is for retry
 
     Ok(ActionResult {
         processed,

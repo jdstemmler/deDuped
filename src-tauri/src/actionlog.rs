@@ -85,6 +85,18 @@ impl ActionLog {
         self.write(&batches)
     }
 
+    /// Replace a batch's entries with a subset (e.g., keeping only failed entries after partial undo).
+    /// If `remaining_entries` is empty, removes the batch entirely.
+    pub fn update_entries(&self, batch_id: &str, remaining_entries: Vec<ActionEntry>) -> Result<(), String> {
+        let mut batches = self.load()?;
+        if remaining_entries.is_empty() {
+            batches.retain(|b| b.id != batch_id);
+        } else if let Some(batch) = batches.iter_mut().find(|b| b.id == batch_id) {
+            batch.entries = remaining_entries;
+        }
+        self.write(&batches)
+    }
+
     fn write(&self, batches: &[ActionBatch]) -> Result<(), String> {
         let json = serde_json::to_string_pretty(batches)
             .map_err(|e| format!("Failed to serialize action log: {e}"))?;
