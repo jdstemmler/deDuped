@@ -1146,3 +1146,45 @@ body {
   border-left: 3px solid var(--accent-blue);
   padding-left: 13px;
 }
+
+/* Perceptual matching */
+.dot-similar { background: #f59e0b; }
+.tag-similar { background: #fef3c7; color: #92400e; }
+
+.similarity-badge {
+  font-size: 11px;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.section-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 12px 4px;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 4px;
+}
+
+.section-header:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+
+.selection-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.threshold-presets {
+  margin-top: 8px;
+}
+
+span.disabled {
+  opacity: 0.5;
+}

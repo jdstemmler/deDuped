@@ -52,13 +52,14 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
 
   // Selective file actions: track which duplicate files are selected
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
-    () => new Set(result.duplicates.map((f) => f.path))
+    () => new Set(result.exact_matches.map((f) => f.path))
   );
 
-  const allDupePaths = result.duplicates.map((f) => f.path);
+  const exactPaths = result.exact_matches.map((f) => f.path);
+  const similarPaths = result.similar_matches.map((f) => f.path);
+  const allMatchPaths = [...exactPaths, ...similarPaths];
   const selectedCount = selectedFiles.size;
-  const totalDupes = allDupePaths.length;
-  const allSelected = selectedCount === totalDupes && totalDupes > 0;
+  const totalMatches = allMatchPaths.length;
 
   const toggleFile = (path: string) => {
     setSelectedFiles((prev) => {
@@ -69,13 +70,10 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     });
   };
 
-  const toggleAll = () => {
-    if (allSelected) {
-      setSelectedFiles(new Set());
-    } else {
-      setSelectedFiles(new Set(allDupePaths));
-    }
-  };
+  const selectAll = () => setSelectedFiles(new Set(allMatchPaths));
+  const selectExact = () => setSelectedFiles(new Set(exactPaths));
+  const selectSimilar = () => setSelectedFiles(new Set(similarPaths));
+  const selectNone = () => setSelectedFiles(new Set());
 
   const handleFileClick = async (path: string) => {
     if (selectedPreview === path) {
@@ -205,7 +203,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } else {
       return;
     }
-    const filesToAct = result.duplicates.filter((f) => selectedFiles.has(f.path));
+    const filesToAct = [...result.exact_matches, ...result.similar_matches].filter((f) => selectedFiles.has(f.path));
     handleAction(filesToAct, mode);
   };
 
@@ -287,58 +285,73 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
         <div className="results-files">
           <div className="file-list">
             <div className="file-list-header">
-              <label>
-                <input
-                  type="checkbox"
-                  className="file-row-checkbox"
-                  checked={allSelected}
-                  onChange={toggleAll}
-                />
-                Select all duplicates
-              </label>
+              <div className="selection-buttons">
+                <button className="btn-small" onClick={selectAll}>Select All</button>
+                <button className="btn-small" onClick={selectExact}>Select Exact</button>
+                {result.similar_matches.length > 0 && (
+                  <button className="btn-small" onClick={selectSimilar}>Select Similar</button>
+                )}
+                <button className="btn-small" onClick={selectNone}>Deselect</button>
+              </div>
               <span className="selection-count">
-                {selectedCount} of {totalDupes} selected
+                {selectedCount} of {totalMatches} selected
               </span>
             </div>
-            {[...result.duplicates, ...result.uniques].map((file) => {
-              const isDupe = file.is_duplicate;
-              const isSelected = isDupe && selectedFiles.has(file.path);
-              const rowClass = [
-                "file-row",
-                isDupe && isSelected ? "selected-dupe" : "",
-                isDupe && !isSelected ? "deselected" : "",
-                selectedPreview === file.path ? "preview-active" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
+            {/* Exact Matches */}
+            {result.exact_matches.length > 0 && (
+              <>
+                <div className="section-header">Exact Matches</div>
+                {result.exact_matches.map((file) => {
+                  const isSelected = selectedFiles.has(file.path);
+                  return (
+                    <div key={file.path} className={`file-row ${isSelected ? "selected-dupe" : "deselected"} ${selectedPreview === file.path ? "preview-active" : ""}`}>
+                      <input type="checkbox" className="file-row-checkbox" checked={isSelected} onChange={() => toggleFile(file.path)} />
+                      <span className="status-dot dot-dupe" />
+                      <span className="file-path" style={{ cursor: "pointer" }} onClick={() => handleFileClick(file.path)}>{file.relative_path}</span>
+                      <span className="file-size">{formatSize(file.size)}</span>
+                      <span className="tag tag-dupe">Exact</span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
 
-              return (
-                <div key={file.path} className={rowClass}>
-                  {isDupe ? (
-                    <input
-                      type="checkbox"
-                      className="file-row-checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleFile(file.path)}
-                    />
-                  ) : (
+            {/* Similar Matches */}
+            {result.similar_matches.length > 0 && (
+              <>
+                <div className="section-header">Similar Matches</div>
+                {result.similar_matches.map((file) => {
+                  const isSelected = selectedFiles.has(file.path);
+                  const similarity = file.hamming_distance != null ? Math.round((64 - file.hamming_distance) / 64 * 100) : null;
+                  return (
+                    <div key={file.path} className={`file-row ${isSelected ? "selected-dupe" : "deselected"} ${selectedPreview === file.path ? "preview-active" : ""}`}>
+                      <input type="checkbox" className="file-row-checkbox" checked={isSelected} onChange={() => toggleFile(file.path)} />
+                      <span className="status-dot dot-similar" />
+                      <span className="file-path" style={{ cursor: "pointer" }} onClick={() => handleFileClick(file.path)}>{file.relative_path}</span>
+                      <span className="file-size">{formatSize(file.size)}</span>
+                      {similarity !== null && <span className="similarity-badge">{similarity}%</span>}
+                      <span className="tag tag-similar">Similar</span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+
+            {/* Uniques */}
+            {result.uniques.length > 0 && (
+              <>
+                <div className="section-header">Unique Files</div>
+                {result.uniques.map((file) => (
+                  <div key={file.path} className={`file-row ${selectedPreview === file.path ? "preview-active" : ""}`}>
                     <span style={{ width: 14, flexShrink: 0 }} />
-                  )}
-                  <span className={`status-dot ${isDupe ? "dot-dupe" : "dot-unique"}`} />
-                  <span
-                    className="file-path"
-                    style={{ cursor: "pointer" }}
-                    onClick={() => handleFileClick(file.path)}
-                  >
-                    {file.relative_path}
-                  </span>
-                  <span className="file-size">{formatSize(file.size)}</span>
-                  <span className={`tag ${isDupe ? "tag-dupe" : "tag-unique"}`}>
-                    {isDupe ? "Duplicate" : "Unique"}
-                  </span>
-                </div>
-              );
-            })}
+                    <span className="status-dot dot-unique" />
+                    <span className="file-path" style={{ cursor: "pointer" }} onClick={() => handleFileClick(file.path)}>{file.relative_path}</span>
+                    <span className="file-size">{formatSize(file.size)}</span>
+                    <span className="tag tag-unique">Unique</span>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
 
@@ -349,9 +362,15 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
               <span className="stat-label">scanned</span>
             </div>
             <div className="stat stat-danger">
-              <span className="stat-value">{result.duplicates.length}</span>
-              <span className="stat-label">dupes</span>
+              <span className="stat-value">{result.exact_matches.length}</span>
+              <span className="stat-label">exact</span>
             </div>
+            {result.similar_matches.length > 0 && (
+              <div className="stat stat-warning">
+                <span className="stat-value">{result.similar_matches.length}</span>
+                <span className="stat-label">similar</span>
+              </div>
+            )}
             <div className="stat stat-success">
               <span className="stat-value">{result.uniques.length}</span>
               <span className="stat-label">unique</span>
@@ -465,9 +484,9 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   {executing
                     ? "Processing..."
                     : reviewAction === "trash"
-                      ? `Move ${selectedCount} of ${totalDupes} to Trash`
+                      ? `Move ${selectedCount} of ${totalMatches} to Trash`
                       : reviewAction === "move"
-                        ? `Move ${selectedCount} of ${totalDupes} Files`
+                        ? `Move ${selectedCount} of ${totalMatches} Files`
                         : "Done"}
                 </button>
               </div>
@@ -483,8 +502,8 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                   {executing
                     ? "Processing..."
                     : config.dupe_mode.type === "Trash"
-                      ? `Move ${selectedCount} of ${totalDupes} to Trash`
-                      : `Move ${selectedCount} of ${totalDupes} Files`}
+                      ? `Move ${selectedCount} of ${totalMatches} to Trash`
+                      : `Move ${selectedCount} of ${totalMatches} Files`}
                 </button>
               </div>
             </div>
@@ -522,6 +541,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
                       {s.eval_cache_hits.toLocaleString()} cache hits ({formatTime(s.eval_hash_ms)})
                     </span>
                   </div>
+                  {s.perceptual_compare_ms > 0 && (
+                    <div className="stats-row">
+                      <span className="stats-label">Perceptual</span>
+                      <span className="stats-value">Compare: {formatTime(s.perceptual_compare_ms)}</span>
+                    </div>
+                  )}
                   <div className="stats-row">
                     <span className="stats-label">Throughput</span>
                     <span className="stats-value">{throughputMBs} MB/s</span>
