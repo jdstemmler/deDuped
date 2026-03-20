@@ -350,12 +350,13 @@ fn cache_set_and_get() {
         mtime_secs: 1700000000,
         mtime_nanos: 500,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
 
     cache.set(&entry).unwrap();
 
-    let result = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "sha256");
-    assert_eq!(result, Some("abc123".to_string()));
+    let hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "sha256").unwrap();
+    assert_eq!(hit.hash, "abc123");
 }
 
 #[test]
@@ -369,18 +370,19 @@ fn cache_get_returns_none_on_mismatch() {
         mtime_secs: 1700000000,
         mtime_nanos: 500,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
 
     cache.set(&entry).unwrap();
 
     // Different size
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 2048, 1700000000, 500, "sha256").is_none());
     // Different mtime
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000001, 500, "sha256").is_none());
     // Different path
-    assert_eq!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500, "sha256"), None);
+    assert!(cache.get("/tmp/test/other.jpg", 1024, 1700000000, 500, "sha256").is_none());
     // Different algorithm
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "xxh3"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 500, "xxh3").is_none());
 }
 
 #[test]
@@ -394,6 +396,7 @@ fn cache_set_overwrites() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry1).unwrap();
 
@@ -404,16 +407,15 @@ fn cache_set_overwrites() {
         mtime_secs: 1700000001,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry2).unwrap();
 
     // Old metadata should no longer match
-    assert_eq!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"), None);
+    assert!(cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256").is_none());
     // New metadata should match
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0, "sha256"),
-        Some("new_hash".to_string())
-    );
+    let hit = cache.get("/tmp/test/photo.jpg", 2048, 1700000001, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "new_hash");
 }
 
 #[test]
@@ -427,6 +429,7 @@ fn cache_stores_different_algorithms_separately() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&sha_entry).unwrap();
 
@@ -437,18 +440,15 @@ fn cache_stores_different_algorithms_separately() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "xxh3".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&xxh_entry).unwrap();
 
     // Each algorithm returns its own hash
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256"),
-        Some("sha_hash".to_string())
-    );
-    assert_eq!(
-        cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "xxh3"),
-        Some("xxh_hash".to_string())
-    );
+    let sha_hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "sha256").unwrap();
+    assert_eq!(sha_hit.hash, "sha_hash");
+    let xxh_hit = cache.get("/tmp/test/photo.jpg", 1024, 1700000000, 0, "xxh3").unwrap();
+    assert_eq!(xxh_hit.hash, "xxh_hash");
 }
 
 #[test]
@@ -463,6 +463,7 @@ fn cache_prune_removes_nonexistent() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry).unwrap();
 
@@ -470,10 +471,7 @@ fn cache_prune_removes_nonexistent() {
     assert_eq!(pruned, 1);
 
     // Entry should be gone
-    assert_eq!(
-        cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0, "sha256"),
-        None
-    );
+    assert!(cache.get("/definitely/does/not/exist/photo.jpg", 100, 1700000000, 0, "sha256").is_none());
 }
 
 #[test]
@@ -492,6 +490,7 @@ fn cache_prune_keeps_existing() {
         mtime_secs: 1700000000,
         mtime_nanos: 0,
         algorithm: "sha256".to_string(),
+        perceptual_hash: None,
     };
     cache.set(&entry).unwrap();
 
@@ -499,10 +498,8 @@ fn cache_prune_keeps_existing() {
     assert_eq!(pruned, 0);
 
     // Entry should still be there
-    assert_eq!(
-        cache.get(&path_str, 4, 1700000000, 0, "sha256"),
-        Some("exists".to_string())
-    );
+    let hit = cache.get(&path_str, 4, 1700000000, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "exists");
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,4 +1128,62 @@ fn dhash_different_images_high_distance() {
     let hash2 = crate::perceptual::compute_dhash(&path2).unwrap();
     let dist = crate::perceptual::hamming_distance(hash1, hash2);
     assert!(dist > 10, "Expected different images to have distance > 10, got {dist}");
+}
+
+// ---------------------------------------------------------------------------
+// cache: perceptual hash storage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cache_stores_and_retrieves_perceptual_hash() {
+    let cache = HashCache::open_in_memory().unwrap();
+    cache.set(&CachedFile {
+        path: "/photo.jpg".to_string(),
+        hash: "abc123".to_string(),
+        size: 1000,
+        mtime_secs: 100,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: Some(0x123456789ABCDEF0_u64 as i64),
+    }).unwrap();
+
+    let hit = cache.get("/photo.jpg", 1000, 100, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "abc123");
+    assert_eq!(hit.perceptual_hash, Some(0x123456789ABCDEF0_u64));
+}
+
+#[test]
+fn cache_stores_null_perceptual_hash() {
+    let cache = HashCache::open_in_memory().unwrap();
+    cache.set(&CachedFile {
+        path: "/doc.pdf".to_string(),
+        hash: "def456".to_string(),
+        size: 2000,
+        mtime_secs: 200,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: None,
+    }).unwrap();
+
+    let hit = cache.get("/doc.pdf", 2000, 200, 0, "sha256").unwrap();
+    assert_eq!(hit.hash, "def456");
+    assert_eq!(hit.perceptual_hash, None);
+}
+
+#[test]
+fn cache_perceptual_hash_high_bit_roundtrip() {
+    let cache = HashCache::open_in_memory().unwrap();
+    let high_val: u64 = 0xFFFFFFFFFFFFFFFF;
+    cache.set(&CachedFile {
+        path: "/high.jpg".to_string(),
+        hash: "ghi789".to_string(),
+        size: 500,
+        mtime_secs: 300,
+        mtime_nanos: 0,
+        algorithm: "sha256".to_string(),
+        perceptual_hash: Some(high_val as i64),
+    }).unwrap();
+
+    let hit = cache.get("/high.jpg", 500, 300, 0, "sha256").unwrap();
+    assert_eq!(hit.perceptual_hash, Some(high_val));
 }

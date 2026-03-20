@@ -11,6 +11,14 @@ pub struct CachedFile {
     pub mtime_secs: i64,
     pub mtime_nanos: u32,
     pub algorithm: String,
+    pub perceptual_hash: Option<i64>,
+}
+
+/// Returned by `get()` when a cache hit is found.
+#[derive(Debug, Clone)]
+pub struct CacheHit {
+    pub hash: String,
+    pub perceptual_hash: Option<u64>,
 }
 
 pub struct HashCache {
@@ -49,13 +57,12 @@ impl HashCache {
                 mtime_secs INTEGER NOT NULL,
                 mtime_nanos INTEGER NOT NULL,
                 algorithm TEXT NOT NULL DEFAULT 'sha256',
+                perceptual_hash INTEGER,
                 PRIMARY KEY (path, algorithm)
             );"
         ).map_err(|e| format!("Failed to create cache table: {e}"))?;
 
         // Migration for legacy databases that lack the `algorithm` column.
-        // SQLite doesn't support ALTER PRIMARY KEY, so we recreate the table
-        // with the composite PK (path, algorithm) and copy data over.
         let has_algorithm: bool = conn
             .prepare("PRAGMA table_info(file_hashes)")
             .map_err(|e| format!("Failed to read table info: {e}"))?
@@ -67,7 +74,6 @@ impl HashCache {
         if !has_algorithm {
             conn.execute_batch(
                 "ALTER TABLE file_hashes ADD COLUMN algorithm TEXT NOT NULL DEFAULT 'sha256';
-                 -- SQLite doesn't support DROP PRIMARY KEY, so we recreate the table.
                  CREATE TABLE IF NOT EXISTS file_hashes_new (
                      path TEXT NOT NULL,
                      hash TEXT NOT NULL,
@@ -75,12 +81,28 @@ impl HashCache {
                      mtime_secs INTEGER NOT NULL,
                      mtime_nanos INTEGER NOT NULL,
                      algorithm TEXT NOT NULL DEFAULT 'sha256',
+                     perceptual_hash INTEGER,
                      PRIMARY KEY (path, algorithm)
                  );
-                 INSERT OR IGNORE INTO file_hashes_new SELECT path, hash, size, mtime_secs, mtime_nanos, algorithm FROM file_hashes;
+                 INSERT OR IGNORE INTO file_hashes_new SELECT path, hash, size, mtime_secs, mtime_nanos, algorithm, NULL FROM file_hashes;
                  DROP TABLE file_hashes;
                  ALTER TABLE file_hashes_new RENAME TO file_hashes;"
             ).map_err(|e| format!("Failed to migrate cache schema: {e}"))?;
+        }
+
+        // Migration for databases that lack the `perceptual_hash` column.
+        let has_perceptual: bool = conn
+            .prepare("PRAGMA table_info(file_hashes)")
+            .map_err(|e| format!("Failed to read table info: {e}"))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("Failed to iterate table info: {e}"))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "perceptual_hash");
+
+        if !has_perceptual {
+            conn.execute_batch(
+                "ALTER TABLE file_hashes ADD COLUMN perceptual_hash INTEGER"
+            ).map_err(|e| format!("Failed to add perceptual_hash column: {e}"))?;
         }
 
         Ok(())
@@ -92,16 +114,20 @@ impl HashCache {
         Ok(data_dir.join("com.photodedup").join("cache.db"))
     }
 
-    /// Returns `Some(hash)` if the file hasn't changed since it was cached.
-    ///
-    /// Staleness check uses (size, mtime). This won't detect edits that
-    /// preserve both (e.g. `touch -r`), but it's correct for normal use.
-    pub fn get(&self, path: &str, size: u64, mtime_secs: i64, mtime_nanos: u32, algorithm: &str) -> Option<String> {
+    /// Returns a `CacheHit` if the file hasn't changed since it was cached.
+    pub fn get(&self, path: &str, size: u64, mtime_secs: i64, mtime_nanos: u32, algorithm: &str) -> Option<CacheHit> {
         self.conn
             .query_row(
-                "SELECT hash FROM file_hashes WHERE path = ?1 AND size = ?2 AND mtime_secs = ?3 AND mtime_nanos = ?4 AND algorithm = ?5",
+                "SELECT hash, perceptual_hash FROM file_hashes WHERE path = ?1 AND size = ?2 AND mtime_secs = ?3 AND mtime_nanos = ?4 AND algorithm = ?5",
                 params![path, size as i64, mtime_secs, mtime_nanos, algorithm],
-                |row| row.get(0),
+                |row| {
+                    let hash: String = row.get(0)?;
+                    let phash: Option<i64> = row.get(1)?;
+                    Ok(CacheHit {
+                        hash,
+                        perceptual_hash: phash.map(|v| v as u64),
+                    })
+                },
             )
             .ok()
     }
@@ -109,8 +135,8 @@ impl HashCache {
     pub fn set(&self, entry: &CachedFile) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO file_hashes (path, hash, size, mtime_secs, mtime_nanos, algorithm) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![entry.path, entry.hash, entry.size as i64, entry.mtime_secs, entry.mtime_nanos, entry.algorithm],
+                "INSERT OR REPLACE INTO file_hashes (path, hash, size, mtime_secs, mtime_nanos, algorithm, perceptual_hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![entry.path, entry.hash, entry.size as i64, entry.mtime_secs, entry.mtime_nanos, entry.algorithm, entry.perceptual_hash],
             )
             .map_err(|e| format!("Failed to write cache: {e}"))?;
         Ok(())

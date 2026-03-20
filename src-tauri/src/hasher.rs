@@ -213,10 +213,10 @@ pub fn hash_files_cached(
         };
         let (size, mtime_secs, mtime_nanos) = meta;
 
-        if let Some(hash) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
+        if let Some(hit) = cache.get(&path_str, size, mtime_secs, mtime_nanos, algorithm) {
             progress.fetch_add(1, Ordering::Relaxed);
             cache_hits += 1;
-            results.push(HashedFile { path: path_str, hash, size });
+            results.push(HashedFile { path: path_str, hash: hit.hash, size });
         } else {
             needs_hashing.push(FileMeta {
                 path: path.clone(),
@@ -259,6 +259,7 @@ pub fn hash_files_cached(
                     mtime_secs: fm.mtime_secs,
                     mtime_nanos: fm.mtime_nanos,
                     algorithm: algorithm.to_string(),
+                    perceptual_hash: None,
                 });
                 results.push(HashedFile {
                     path: fm.path_str,
