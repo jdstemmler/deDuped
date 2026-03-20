@@ -288,7 +288,7 @@ fn move_file_preserves_structure() {
     let file = sub.join("photo.jpg");
     fs::write(&file, b"image data").unwrap();
 
-    let result = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
+    let (result, _warnings) = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
 
     assert_eq!(result, dest_dir.path().join("sub").join("photo.jpg"));
     assert!(result.exists());
@@ -308,7 +308,7 @@ fn move_file_handles_collision() {
     let existing = dest_dir.path().join("photo.jpg");
     fs::write(&existing, b"old version").unwrap();
 
-    let result = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
+    let (result, _warnings) = fileops::move_file(&file, src_dir.path(), dest_dir.path()).unwrap();
 
     assert_eq!(
         result.file_name().unwrap().to_string_lossy(),
@@ -747,7 +747,7 @@ fn integration_move_preserves_structure_and_sidecars() {
     create_file(&eval_dir, "2024/photo.xmp", b"sidecar metadata");
 
     let nef_path = eval_dir.join("2024/photo.nef");
-    let result = fileops::move_file(&nef_path, &eval_dir, &dest_dir).unwrap();
+    let (result, _warnings) = fileops::move_file(&nef_path, &eval_dir, &dest_dir).unwrap();
 
     // NEF should be at dest/2024/photo.nef
     assert_eq!(result, dest_dir.join("2024").join("photo.nef"));
@@ -783,7 +783,7 @@ fn integration_move_handles_collision() {
     create_file(&dest_dir, "photo.jpg", b"original version");
 
     let eval_photo = eval_dir.join("photo.jpg");
-    let result = fileops::move_file(&eval_photo, &eval_dir, &dest_dir).unwrap();
+    let (result, _warnings) = fileops::move_file(&eval_photo, &eval_dir, &dest_dir).unwrap();
 
     // Original at dest should be untouched
     let dest_original = dest_dir.join("photo.jpg");

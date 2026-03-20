@@ -403,7 +403,10 @@ pub async fn execute_action(
         let result = match &action {
             ActionMode::Trash => {
                 let res = fileops::trash_file(&file_path);
-                if res.is_ok() {
+                if let Ok(warnings) = &res {
+                    for w in warnings {
+                        errors.push(w.clone());
+                    }
                     log_entries.push(ActionEntry {
                         timestamp: now.clone(),
                         action: "trash".to_string(),
@@ -412,12 +415,15 @@ pub async fn execute_action(
                         eval_dir: eval_dir.clone(),
                     });
                 }
-                res
+                res.map(|_| ())
             }
             ActionMode::MoveToFolder { dest } => {
                 let dest_path_buf = PathBuf::from(dest);
                 let res = fileops::move_file(&file_path, &eval_path, &dest_path_buf);
-                if let Ok(final_dest) = &res {
+                if let Ok((final_dest, warnings)) = &res {
+                    for w in warnings {
+                        errors.push(w.clone());
+                    }
                     log_entries.push(ActionEntry {
                         timestamp: now.clone(),
                         action: "move".to_string(),
