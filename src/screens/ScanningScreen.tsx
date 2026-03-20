@@ -80,6 +80,7 @@ export default function ScanningScreen({ config, onComplete, onBack }: Props) {
           [{current.toLocaleString()} / {total.toLocaleString()}]
         </span>
       </div>
+      <button className="btn-link" onClick={onBack}>Cancel</button>
     </div>
   );
 }
