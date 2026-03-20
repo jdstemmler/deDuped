@@ -84,28 +84,28 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     initialConfig?.hash_algorithm ?? saved?.hashAlgorithm ?? "sha256"
   );
 
-  // Drag-and-drop state: which picker is being hovered
   const [dragOver, setDragOver] = useState<"reference" | "eval" | null>(null);
+  const dragOverRef = useRef<"reference" | "eval" | null>(null);
 
-  // Listen for Tauri drag-drop events
   useEffect(() => {
     const unlisten = listen<DragDropPayload>("tauri://drag-drop", (event) => {
       const paths = event.payload.paths;
-      if (paths.length > 0 && dragOver) {
+      if (paths.length > 0 && dragOverRef.current) {
         const droppedPath = paths[0];
-        if (dragOver === "reference") {
+        if (dragOverRef.current === "reference") {
           setReferenceDir(droppedPath);
         } else {
           setEvalDir(droppedPath);
         }
       }
+      dragOverRef.current = null;
       setDragOver(null);
     });
 
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [dragOver]);
+  }, []);
 
   const pickFolder = async (setter: (path: string) => void) => {
     const selected = await open({ directory: true, multiple: false });
@@ -120,7 +120,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     (allFiles || selectedCategories.size > 0);
 
   const handleStart = () => {
-    // Persist config to localStorage for next session
     saveSavedConfig({
       reference_dir: referenceDir,
       eval_dir: evalDir,
@@ -156,9 +155,9 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         <div
           className={`folder-picker ${referenceDir ? "selected" : ""} ${dragOver === "reference" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setReferenceDir)}
-          onDragEnter={(e) => { e.preventDefault(); setDragOver("reference"); }}
+          onDragEnter={(e) => { e.preventDefault(); dragOverRef.current = "reference"; setDragOver("reference"); }}
           onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => setDragOver((prev) => prev === "reference" ? null : prev)}
+          onDragLeave={() => { dragOverRef.current = dragOverRef.current === "reference" ? null : dragOverRef.current; setDragOver((prev) => prev === "reference" ? null : prev); }}
         >
           <span className="badge badge-protected">Protected</span>
           <div className="picker-label">Reference Folder</div>
@@ -172,9 +171,9 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         <div
           className={`folder-picker ${evalDir ? "selected" : ""} ${dragOver === "eval" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setEvalDir)}
-          onDragEnter={(e) => { e.preventDefault(); setDragOver("eval"); }}
+          onDragEnter={(e) => { e.preventDefault(); dragOverRef.current = "eval"; setDragOver("eval"); }}
           onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => setDragOver((prev) => prev === "eval" ? null : prev)}
+          onDragLeave={() => { dragOverRef.current = dragOverRef.current === "eval" ? null : dragOverRef.current; setDragOver((prev) => prev === "eval" ? null : prev); }}
         >
           <span className="badge badge-eval">Checking</span>
           <div className="picker-label">Eval Folder</div>

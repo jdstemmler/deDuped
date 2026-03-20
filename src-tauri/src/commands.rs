@@ -128,19 +128,15 @@ fn scan_folders_blocking(
     eval_dir: &Path,
     config: &ScanConfig,
 ) -> Result<ScanResult, String> {
-    // Resolve which extensions to accept based on user-selected categories
     let allowed = hasher::resolve_extensions(&config.categories, config.all_files);
 
-    // Open cache once and reuse for the entire scan
     let cache = HashCache::open()?;
     let _ = cache.prune();
 
-    // Phase 1a: Collect reference files
     emit_progress(app, "Collecting reference files...", 0, 0);
     let ref_files = hasher::collect_files(ref_dir, allowed.as_ref());
     let ref_total = ref_files.len();
 
-    // Phase 1b: Hash reference folder
     let ref_progress = Arc::new(AtomicUsize::new(0));
     let reporter = spawn_progress_reporter(
         app.clone(),
@@ -152,15 +148,12 @@ fn scan_folders_blocking(
     let ref_result = hasher::hash_files_cached(&ref_files, &cache, ref_progress, &config.hash_algorithm);
     let _ = reporter.join();
 
-    // Build hash set from reference
     let ref_hashes: HashSet<String> = ref_result.hashed.iter().map(|f| f.hash.clone()).collect();
 
-    // Phase 2a: Collect eval files
     emit_progress(app, "Collecting eval files...", 0, 0);
     let eval_files = hasher::collect_files(eval_dir, allowed.as_ref());
     let eval_total = eval_files.len();
 
-    // Phase 2b: Hash eval folder
     let eval_progress = Arc::new(AtomicUsize::new(0));
     let reporter = spawn_progress_reporter(
         app.clone(),

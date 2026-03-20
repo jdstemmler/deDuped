@@ -599,6 +599,10 @@ body {
   color: var(--green-dot);
 }
 
+.stat-warning .stat-value {
+  color: #d97706;
+}
+
 /* ── File List ───────────────────────────────────────── */
 .file-list {
   flex: 1;

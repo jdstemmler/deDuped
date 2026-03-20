@@ -112,8 +112,9 @@ fn hash_file_xxh3(path: &Path) -> Result<String, String> {
 
 pub fn hash_file(path: &Path, algorithm: &str) -> Result<String, String> {
     match algorithm {
+        "sha256" => hash_file_sha256(path),
         "xxh3" => hash_file_xxh3(path),
-        _ => hash_file_sha256(path),
+        other => Err(format!("Unknown hash algorithm: {other}")),
     }
 }
 

@@ -29,7 +29,6 @@ impl HashCache {
         Ok(Self { conn })
     }
 
-    /// Opens an in-memory cache for testing.
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory()
@@ -42,15 +41,17 @@ impl HashCache {
     fn init_schema(conn: &Connection) -> Result<(), String> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS file_hashes (
-                path TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
                 hash TEXT NOT NULL,
                 size INTEGER NOT NULL,
                 mtime_secs INTEGER NOT NULL,
-                mtime_nanos INTEGER NOT NULL
+                mtime_nanos INTEGER NOT NULL,
+                algorithm TEXT NOT NULL DEFAULT 'sha256',
+                PRIMARY KEY (path, algorithm)
             );"
         ).map_err(|e| format!("Failed to create cache table: {e}"))?;
 
-        // Migration: add algorithm column if it doesn't exist yet
+        // Migration for legacy databases: add algorithm column and recreate with composite PK
         let has_algorithm: bool = conn
             .prepare("PRAGMA table_info(file_hashes)")
             .map_err(|e| format!("Failed to read table info: {e}"))?
@@ -62,7 +63,6 @@ impl HashCache {
         if !has_algorithm {
             conn.execute_batch(
                 "ALTER TABLE file_hashes ADD COLUMN algorithm TEXT NOT NULL DEFAULT 'sha256';
-                 -- Old primary key was just path; now we need (path, algorithm).
                  -- SQLite doesn't support DROP PRIMARY KEY, so we recreate the table.
                  CREATE TABLE IF NOT EXISTS file_hashes_new (
                      path TEXT NOT NULL,

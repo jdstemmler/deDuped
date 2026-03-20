@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { ScanConfig, ScanResult, ActionMode, ActionResult, EvalFile } from "../types";
@@ -23,7 +23,17 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [actionDone, setActionDone] = useState(false);
   const [actionResult, setActionResult] = useState<ActionResult | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (exportTimerRef.current) clearTimeout(exportTimerRef.current);
+    };
+  }, []);
 
   const pickFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
@@ -31,20 +41,27 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   };
 
   const handleExport = async (format: "csv" | "json") => {
+    setExportError(null);
     const ext = format === "csv" ? "csv" : "json";
     const filePath = await save({
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
       defaultPath: `scan-report.${ext}`,
     });
     if (!filePath) return;
+    setExporting(true);
     try {
       await invoke("export_report", {
         results: result,
         format,
         destPath: filePath,
       });
+      setExportSuccess(true);
+      if (exportTimerRef.current) clearTimeout(exportTimerRef.current);
+      exportTimerRef.current = setTimeout(() => setExportSuccess(false), 3000);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -53,6 +70,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     : true;
 
   const handleAction = async (dupeFiles: EvalFile[], mode: ActionMode) => {
+    if (mode.type === "Nothing") {
+      setActionResult({ processed: 0, errors: [], dirs_cleaned: 0 });
+      setActionDone(true);
+      return;
+    }
+
     setExecuting(true);
     setActionError(null);
     try {
@@ -97,7 +120,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
     } else if (config.dupe_mode.type === "MoveToFolder") {
       mode = { type: "MoveToFolder", dest: config.dupe_mode.dest };
     } else {
-      return; // unreachable: non-review mode is always Trash or MoveToFolder
+      return;
     }
     handleAction(result.duplicates, mode);
   };
@@ -168,9 +191,16 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
           </div>
 
           <div className="export-buttons">
-            <button className="btn-small" onClick={() => handleExport("csv")}>Export CSV</button>
-            <button className="btn-small" onClick={() => handleExport("json")}>Export JSON</button>
+            <button className="btn-small" disabled={exporting} onClick={() => handleExport("csv")}>Export CSV</button>
+            <button className="btn-small" disabled={exporting} onClick={() => handleExport("json")}>Export JSON</button>
           </div>
+          {exportSuccess && <div style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px" }}>Exported!</div>}
+          {exportError && (
+            <div className="error-list">
+              <h4>Export Failed</h4>
+              <div className="error-item">{exportError}</div>
+            </div>
+          )}
 
           {actionError && (
             <div className="error-list">
