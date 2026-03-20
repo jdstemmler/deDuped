@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "deDuped",
-        "width": 1100,
+        "width": 1200,
         "height": 820,
         "resizable": true,
         "fullscreen": false

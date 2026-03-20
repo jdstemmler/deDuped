@@ -686,7 +686,7 @@ body {
 
 .results-layout {
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr 320px;
   gap: 24px;
   flex: 1;
   min-height: 0;
@@ -707,6 +707,7 @@ body {
 
 .summary-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -716,8 +717,9 @@ body {
 }
 
 .stat {
-  flex: 1;
-  padding: 10px 8px;
+  flex: 1 1 0;
+  min-width: 50px;
+  padding: 8px 6px;
   text-align: center;
   border-right: 1px solid var(--border);
 }
@@ -728,7 +730,7 @@ body {
 
 .stat-value {
   display: block;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
 }
 
