@@ -44,8 +44,7 @@ body {
 
 /* ── App Layout ──────────────────────────────────────── */
 .app {
-  max-width: 1200px;
-  margin: 0 auto;
+  margin: 0;
   padding: 32px 40px;
   height: 100vh;
   display: flex;
