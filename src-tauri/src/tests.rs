@@ -1399,3 +1399,122 @@ fn hash_files_cached_backfills_perceptual_hash_on_legacy_cache_hit() {
     assert!(hit2.perceptual_hash.is_some(), "Cache should now have the perceptual hash");
     assert_eq!(hit2.perceptual_hash, result.hashed[0].perceptual_hash);
 }
+
+// ---------------------------------------------------------------------------
+// move_file: returns sidecar warnings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn move_file_returns_empty_warnings_on_success() {
+    let tmp = TempDir::new().unwrap();
+    let eval_dir = tmp.path().join("eval");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&eval_dir).unwrap();
+    fs::create_dir_all(&dest_dir).unwrap();
+
+    fs::write(eval_dir.join("photo.jpg"), b"image data").unwrap();
+    let (final_path, warnings) = fileops::move_file(
+        &eval_dir.join("photo.jpg"), &eval_dir, &dest_dir
+    ).unwrap();
+
+    assert!(final_path.exists());
+    assert!(warnings.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// csv_quote: RFC 4180 field quoting
+// ---------------------------------------------------------------------------
+
+#[test]
+fn csv_quote_no_special_chars() {
+    assert_eq!(commands::csv_quote("hello"), "hello");
+}
+
+#[test]
+fn csv_quote_with_comma() {
+    assert_eq!(commands::csv_quote("hello,world"), "\"hello,world\"");
+}
+
+#[test]
+fn csv_quote_with_double_quotes() {
+    assert_eq!(commands::csv_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+}
+
+#[test]
+fn csv_quote_with_newline() {
+    assert_eq!(commands::csv_quote("line1\nline2"), "\"line1\nline2\"");
+}
+
+#[test]
+fn csv_quote_path_with_comma() {
+    assert_eq!(
+        commands::csv_quote("photos/2024, vacation/IMG_001.jpg"),
+        "\"photos/2024, vacation/IMG_001.jpg\""
+    );
+}
+
+// ---------------------------------------------------------------------------
+// resolve_extensions: custom and removed extensions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolve_extensions_with_custom_addition() {
+    let custom = HashMap::from([("images".to_string(), vec!["cr4".to_string()])]);
+    let removed = HashMap::new();
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(exts.contains("cr4"), "Custom extension should be included");
+    assert!(exts.contains("jpg"), "Default extension should still be present");
+}
+
+#[test]
+fn resolve_extensions_with_removed_default() {
+    let custom = HashMap::new();
+    let removed = HashMap::from([("images".to_string(), vec!["bmp".to_string()])]);
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(!exts.contains("bmp"), "Removed extension should be excluded");
+    assert!(exts.contains("jpg"), "Other defaults should remain");
+}
+
+#[test]
+fn resolve_extensions_custom_and_removed_combined() {
+    let custom = HashMap::from([("images".to_string(), vec!["raw".to_string()])]);
+    let removed = HashMap::from([("images".to_string(), vec!["webp".to_string()])]);
+    let result = hasher::resolve_extensions(&["images".to_string()], false, &custom, &removed);
+    let exts = result.unwrap();
+    assert!(exts.contains("raw"));
+    assert!(!exts.contains("webp"));
+    assert!(exts.contains("jpg"));
+}
+
+// ---------------------------------------------------------------------------
+// hash_file: unknown algorithm
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_file_unknown_algorithm_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.txt");
+    fs::write(&file, b"content").unwrap();
+    let result = hasher::hash_file(&file, "blake3");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Unknown hash algorithm"));
+}
+
+// ---------------------------------------------------------------------------
+// cleanup_empty_dirs: .DS_Store handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cleanup_removes_dir_with_only_ds_store() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("root");
+    let subdir = root.join("empty_looking");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join(".DS_Store"), b"junk").unwrap();
+
+    let removed = fileops::cleanup_empty_dirs(&root).unwrap();
+    assert_eq!(removed, 1);
+    assert!(!subdir.exists());
+}
