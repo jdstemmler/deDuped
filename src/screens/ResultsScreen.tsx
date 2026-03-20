@@ -184,7 +184,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
       if (config.move_uniques && config.unique_dest) {
         const uniqueRes = await invoke<ActionResult>("execute_action", {
           evalDir: config.eval_dir,
-          files: result.uniques.map((f) => f.path),
+          files: allUniques.map((f) => f.path),
           action: { type: "MoveToFolder", dest: config.unique_dest },
         });
         merged = {

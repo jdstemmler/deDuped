@@ -113,7 +113,7 @@ SHIPPED in v0.2.0. Category selector with Images/Videos/Documents/Audio/All File
 
 ---
 
-## FR-002: Perceptual hashing for near-duplicate detection — SHIPPED (v0.3.0)
+## FR-002: Perceptual hashing for near-duplicate detection — SHIPPED (v1.0.0)
 
 ### Problem
 
@@ -256,7 +256,7 @@ High. This is the #1 differentiator that would set deDuped apart from basic hash
 
 ### Status
 
-SHIPPED in v0.3.0. dHash perceptual matching with Strict/Moderate/Loose presets, grouped results (Exact/Similar/Unique), and per-file similarity percentage display. Supported formats: JPEG, PNG, TIFF, BMP, WebP.
+SHIPPED in v1.0.0. dHash perceptual matching with Strict/Moderate/Loose presets, grouped results (Exact/Similar/Unique), and per-file similarity percentage display. Supported formats: JPEG, PNG, TIFF, BMP, WebP.
 
 ### Future scope
 

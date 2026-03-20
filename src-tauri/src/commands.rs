@@ -3,7 +3,7 @@
 use base64::Engine as _;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read as _, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
