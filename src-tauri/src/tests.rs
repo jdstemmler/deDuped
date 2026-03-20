@@ -1018,3 +1018,117 @@ fn integration_csv_export() {
     assert!(lines[1].contains("1024"));
     assert!(lines[1].contains("aaa111"));
 }
+
+// ---------------------------------------------------------------------------
+// perceptual: hamming_distance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hamming_distance_identical() {
+    assert_eq!(crate::perceptual::hamming_distance(0, 0), 0);
+    assert_eq!(crate::perceptual::hamming_distance(u64::MAX, u64::MAX), 0);
+}
+
+#[test]
+fn hamming_distance_one_bit() {
+    assert_eq!(crate::perceptual::hamming_distance(0, 1), 1);
+    assert_eq!(crate::perceptual::hamming_distance(0b1010, 0b1000), 1);
+}
+
+#[test]
+fn hamming_distance_all_bits() {
+    assert_eq!(crate::perceptual::hamming_distance(0, u64::MAX), 64);
+}
+
+#[test]
+fn hamming_distance_known_values() {
+    // 0xFF00 vs 0x00FF: 16 bits differ
+    assert_eq!(crate::perceptual::hamming_distance(0xFF00, 0x00FF), 16);
+}
+
+// ---------------------------------------------------------------------------
+// perceptual: compute_dhash
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dhash_unsupported_format_returns_none() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.txt");
+    fs::write(&file, b"not an image").unwrap();
+    assert!(crate::perceptual::compute_dhash(&file).is_none());
+}
+
+#[test]
+fn dhash_nonexistent_file_returns_none() {
+    assert!(crate::perceptual::compute_dhash(Path::new("/does/not/exist.jpg")).is_none());
+}
+
+#[test]
+fn dhash_deterministic() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("test.png");
+
+    let mut imgbuf = image::ImageBuffer::new(10, 10);
+    for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+        let val = ((x * 25 + y * 10) % 256) as u8;
+        *pixel = image::Luma([val]);
+    }
+    imgbuf.save(&file).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&file).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&file).unwrap();
+    assert_eq!(hash1, hash2);
+}
+
+#[test]
+fn dhash_similar_images_low_distance() {
+    let dir = TempDir::new().unwrap();
+
+    let mut img1 = image::ImageBuffer::new(100, 100);
+    for (x, _y, pixel) in img1.enumerate_pixels_mut() {
+        let val = ((x * 255) / 99) as u8;
+        *pixel = image::Rgb([val, val, val]);
+    }
+    let path1 = dir.path().join("gradient1.png");
+    img1.save(&path1).unwrap();
+
+    let mut img2 = img1.clone();
+    for (_x, _y, pixel) in img2.enumerate_pixels_mut() {
+        pixel[0] = pixel[0].saturating_add(1);
+    }
+    let path2 = dir.path().join("gradient2.png");
+    img2.save(&path2).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&path1).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&path2).unwrap();
+    let dist = crate::perceptual::hamming_distance(hash1, hash2);
+    assert!(dist <= 5, "Expected similar images to have distance <= 5, got {dist}");
+}
+
+#[test]
+fn dhash_different_images_high_distance() {
+    let dir = TempDir::new().unwrap();
+
+    // Horizontal gradient: pixel values increase left-to-right.
+    // dHash compares left vs right, so left < right => bit 0 for every pair.
+    let img1 = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = ((x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let path1 = dir.path().join("h_gradient.png");
+    img1.save(&path1).unwrap();
+
+    // Reverse horizontal gradient: pixel values decrease left-to-right.
+    // dHash: left > right => bit 1 for every pair.
+    let img2 = image::ImageBuffer::from_fn(100, 100, |x, _y| {
+        let val = (255 - (x * 255) / 99) as u8;
+        image::Rgb([val, val, val])
+    });
+    let path2 = dir.path().join("h_gradient_rev.png");
+    img2.save(&path2).unwrap();
+
+    let hash1 = crate::perceptual::compute_dhash(&path1).unwrap();
+    let hash2 = crate::perceptual::compute_dhash(&path2).unwrap();
+    let dist = crate::perceptual::hamming_distance(hash1, hash2);
+    assert!(dist > 10, "Expected different images to have distance > 10, got {dist}");
+}

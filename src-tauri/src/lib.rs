@@ -5,6 +5,7 @@ mod cache;
 mod commands;
 mod fileops;
 mod hasher;
+mod perceptual;
 
 #[cfg(test)]
 mod tests;
