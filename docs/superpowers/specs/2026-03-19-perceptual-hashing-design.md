@@ -106,8 +106,7 @@ Cache key unchanged: `(path, algorithm)`. Staleness logic unchanged (invalidate 
 - `total_eval`, `skipped`, `stats` retained
 
 **`ScanStats`** gains:
-- `perceptual_hash_ms: u64` — time to compute perceptual hashes (0 when disabled)
-- `perceptual_compare_ms: u64` — time for Hamming distance comparisons (0 when disabled)
+- `perceptual_compare_ms: u64` — time for Hamming distance comparisons (0 when disabled). dHash computation time is included in `ref_hash_ms`/`eval_hash_ms` since it runs inline during the hashing pipeline.
 
 **`scan_folders`** command:
 - After content comparison, if `perceptual_matching` is enabled:
@@ -143,7 +142,6 @@ Cache key unchanged: `(path, algorithm)`. Staleness logic unchanged (invalidate 
 - `total_eval`, `skipped`, `stats` retained
 
 **`ScanStats`** gains:
-- `perceptual_hash_ms: number` (0 when disabled)
 - `perceptual_compare_ms: number` (0 when disabled)
 
 ### SetupScreen: `src/screens/SetupScreen.tsx`
