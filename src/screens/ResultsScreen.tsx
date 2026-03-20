@@ -44,6 +44,12 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   const [previewData, setPreviewData] = useState<FilePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
+  // Undo state
+  const [lastActionType, setLastActionType] = useState<string | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoResult, setUndoResult] = useState<ActionResult | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
+
   // Selective file actions: track which duplicate files are selected
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
     () => new Set(result.duplicates.map((f) => f.path))
@@ -133,6 +139,7 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
 
   const handleAction = async (dupeFiles: EvalFile[], mode: ActionMode) => {
     if (mode.type === "Nothing") {
+      setLastActionType("nothing");
       setActionResult({ processed: 0, errors: [], dirs_cleaned: 0 });
       setActionDone(true);
       return;
@@ -162,12 +169,26 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
         };
       }
 
+      setLastActionType(mode.type === "Trash" ? "trash" : "move");
       setActionResult(merged);
       setActionDone(true);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setExecuting(false);
+    }
+  };
+
+  const handleUndo = async () => {
+    setUndoing(true);
+    setUndoError(null);
+    try {
+      const res = await invoke<ActionResult>("undo_last_action");
+      setUndoResult(res);
+    } catch (err) {
+      setUndoError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUndoing(false);
     }
   };
 
@@ -189,25 +210,72 @@ export default function ResultsScreen({ config, result, onNewScan }: Props) {
   };
 
   if (actionDone && actionResult) {
+    const canUndo = lastActionType === "move" && !undoResult;
+    const isTrash = lastActionType === "trash";
+
     return (
       <div className="results">
         <div className="completion">
-          <h2>Done</h2>
-          <p>{actionResult.processed} files processed</p>
-          {actionResult.dirs_cleaned > 0 && (
-            <p>{actionResult.dirs_cleaned} empty directories cleaned up</p>
+          <h2>{undoResult ? "Undo Complete" : "Done"}</h2>
+          {undoResult ? (
+            <>
+              <p>{undoResult.processed} files restored</p>
+              {undoResult.dirs_cleaned > 0 && (
+                <p>{undoResult.dirs_cleaned} empty directories cleaned up</p>
+              )}
+              {undoResult.errors.length > 0 && (
+                <div className="error-list">
+                  <h4>Errors ({undoResult.errors.length})</h4>
+                  {undoResult.errors.map((e, i) => (
+                    <div key={i} className="error-item">{e}</div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p>{actionResult.processed} files processed</p>
+              {actionResult.dirs_cleaned > 0 && (
+                <p>{actionResult.dirs_cleaned} empty directories cleaned up</p>
+              )}
+              {actionResult.errors.length > 0 && (
+                <div className="error-list">
+                  <h4>Errors ({actionResult.errors.length})</h4>
+                  {actionResult.errors.map((e, i) => (
+                    <div key={i} className="error-item">{e}</div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          {actionResult.errors.length > 0 && (
+          {undoError && (
             <div className="error-list">
-              <h4>Errors ({actionResult.errors.length})</h4>
-              {actionResult.errors.map((e, i) => (
-                <div key={i} className="error-item">{e}</div>
-              ))}
+              <div className="error-item">{undoError}</div>
             </div>
           )}
-          <button className="btn-primary" onClick={onNewScan}>
-            ← New Scan
-          </button>
+          <div className="completion-actions">
+            <button className="btn-primary" onClick={onNewScan}>
+              &larr; New Scan
+            </button>
+            {canUndo && (
+              <button
+                className="undo-btn"
+                disabled={undoing}
+                onClick={handleUndo}
+              >
+                {undoing ? "Undoing..." : "Undo Move"}
+              </button>
+            )}
+            {isTrash && !undoResult && (
+              <button
+                className="undo-btn"
+                disabled
+                title="Restore from Trash manually"
+              >
+                Undo (N/A)
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );

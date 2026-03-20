@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
+use crate::actionlog::{ActionBatch, ActionEntry, ActionLog};
 use crate::cache::HashCache;
 use crate::fileops;
 use crate::hasher;
@@ -282,6 +283,42 @@ fn scan_folders_blocking(
     })
 }
 
+/// Generate an ISO 8601 timestamp from the current system time.
+fn iso_now() -> String {
+    use std::time::SystemTime;
+    let dur = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    let (year, month, day) = days_to_ymd(days as i64);
+
+    format!(
+        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
+    )
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
+    days += 719468;
+    let era = if days >= 0 { days } else { days - 146096 } / 146097;
+    let doe = (days - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 #[tauri::command]
 pub async fn execute_action(
     eval_dir: String,
@@ -291,6 +328,9 @@ pub async fn execute_action(
     let eval_path = PathBuf::from(&eval_dir);
     let mut processed = 0;
     let mut errors = Vec::new();
+    let mut log_entries: Vec<ActionEntry> = Vec::new();
+
+    let now = iso_now();
 
     for file_str in &files {
         let file_path = PathBuf::from(file_str);
@@ -300,9 +340,32 @@ pub async fn execute_action(
         }
 
         let result = match &action {
-            ActionMode::Trash => fileops::trash_file(&file_path),
+            ActionMode::Trash => {
+                let res = fileops::trash_file(&file_path);
+                if res.is_ok() {
+                    log_entries.push(ActionEntry {
+                        timestamp: now.clone(),
+                        action: "trash".to_string(),
+                        source_path: file_str.clone(),
+                        dest_path: None,
+                        eval_dir: eval_dir.clone(),
+                    });
+                }
+                res
+            }
             ActionMode::MoveToFolder { dest } => {
-                fileops::move_file(&file_path, &eval_path, &PathBuf::from(dest)).map(|_| ())
+                let dest_path_buf = PathBuf::from(dest);
+                let res = fileops::move_file(&file_path, &eval_path, &dest_path_buf);
+                if let Ok(final_dest) = &res {
+                    log_entries.push(ActionEntry {
+                        timestamp: now.clone(),
+                        action: "move".to_string(),
+                        source_path: file_str.clone(),
+                        dest_path: Some(final_dest.to_string_lossy().to_string()),
+                        eval_dir: eval_dir.clone(),
+                    });
+                }
+                res.map(|_| ())
             }
             ActionMode::Nothing => Ok(()),
         };
@@ -319,6 +382,164 @@ pub async fn execute_action(
     } else {
         0
     };
+
+    // Record the batch in the action log (best-effort).
+    if !log_entries.is_empty() {
+        let action_type = match &action {
+            ActionMode::Trash => "trash",
+            ActionMode::MoveToFolder { .. } => "move",
+            ActionMode::Nothing => "nothing",
+        };
+
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let batch = ActionBatch {
+            id: format!("{millis}"),
+            timestamp: now,
+            action_type: action_type.to_string(),
+            entries: log_entries,
+            eval_dir: eval_dir.clone(),
+        };
+
+        if let Ok(log) = ActionLog::default() {
+            let _ = log.append(batch);
+        }
+    }
+
+    Ok(ActionResult {
+        processed,
+        errors,
+        dirs_cleaned,
+    })
+}
+
+/// Lightweight representation of a batch for the frontend (no full entry list).
+#[derive(Debug, Clone, Serialize)]
+pub struct ActionBatchSummary {
+    pub id: String,
+    pub timestamp: String,
+    pub action_type: String,
+    pub entry_count: usize,
+    pub eval_dir: String,
+}
+
+#[tauri::command]
+pub async fn get_action_log() -> Result<Vec<ActionBatchSummary>, String> {
+    let log = ActionLog::default()?;
+    let batches = log.load()?;
+
+    let mut summaries: Vec<ActionBatchSummary> = batches
+        .iter()
+        .map(|b| ActionBatchSummary {
+            id: b.id.clone(),
+            timestamp: b.timestamp.clone(),
+            action_type: b.action_type.clone(),
+            entry_count: b.entries.len(),
+            eval_dir: b.eval_dir.clone(),
+        })
+        .collect();
+    summaries.reverse();
+    Ok(summaries)
+}
+
+#[tauri::command]
+pub async fn undo_last_action() -> Result<ActionResult, String> {
+    let log = ActionLog::default()?;
+    let batches = log.load()?;
+
+    let batch = batches.last().ok_or("No actions to undo")?;
+
+    if batch.action_type == "trash" {
+        return Err(
+            "Trash undo is not supported \u{2014} restore files manually from Trash.".to_string(),
+        );
+    }
+
+    if batch.action_type != "move" {
+        return Err(format!("Cannot undo action type: {}", batch.action_type));
+    }
+
+    let mut processed = 0;
+    let mut errors = Vec::new();
+
+    for entry in &batch.entries {
+        let dest = match &entry.dest_path {
+            Some(d) => PathBuf::from(d),
+            None => {
+                errors.push(format!("No destination recorded for {}", entry.source_path));
+                continue;
+            }
+        };
+
+        if !dest.exists() {
+            errors.push(format!(
+                "Destination file no longer exists: {}",
+                dest.display()
+            ));
+            continue;
+        }
+
+        let source = PathBuf::from(&entry.source_path);
+
+        if let Some(parent) = source.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                errors.push(format!(
+                    "Failed to create directory {}: {e}",
+                    parent.display()
+                ));
+                continue;
+            }
+        }
+
+        let target = fileops::resolve_collision(&source);
+        let res = fs::rename(&dest, &target).or_else(|_| {
+            fs::copy(&dest, &target)
+                .map_err(|e| format!("Failed to copy {} back: {e}", dest.display()))?;
+            fs::remove_file(&dest)
+                .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
+            Ok::<(), String>(())
+        });
+
+        match res {
+            Ok(()) => processed += 1,
+            Err(e) => errors.push(format!("{e}")),
+        }
+    }
+
+    // Clean up empty directories in the destination folder after undo.
+    let dirs_cleaned = if let Some(first_entry) = batch.entries.first() {
+        if let Some(dest_path) = &first_entry.dest_path {
+            let dest_file = PathBuf::from(dest_path);
+            if let Some(parent) = dest_file.parent() {
+                let source_path = PathBuf::from(&first_entry.source_path);
+                let eval_dir = PathBuf::from(&first_entry.eval_dir);
+                if let Ok(relative) = source_path.strip_prefix(&eval_dir) {
+                    let relative_str = relative.to_string_lossy();
+                    let dest_str = dest_file.to_string_lossy();
+                    if let Some(root_str) = dest_str.strip_suffix(&*relative_str) {
+                        let dest_root = PathBuf::from(root_str.trim_end_matches('/'));
+                        fileops::cleanup_empty_dirs(&dest_root).unwrap_or(0)
+                    } else {
+                        fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                    }
+                } else {
+                    fileops::cleanup_empty_dirs(parent).unwrap_or(0)
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let batch_id = batch.id.clone();
+    log.remove_batch(&batch_id)?;
 
     Ok(ActionResult {
         processed,

@@ -62,6 +62,14 @@ export interface ActionResult {
   dirs_cleaned: number;
 }
 
+export interface ActionBatch {
+  id: string;
+  timestamp: string;
+  action_type: string;
+  entry_count: number;
+  eval_dir: string;
+}
+
 export interface FilePreview {
   path: string;
   size: number;
