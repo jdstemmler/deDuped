@@ -22,6 +22,7 @@ deDuped's core differentiator is the **one-directional model**: the reference fo
 
 - **One-way dedup** — reference folder is never touched
 - **Parallel hashing** — SHA-256 or xxHash (xxh3), parallelized with rayon
+- **Perceptual matching** — dHash-based near-duplicate detection catches visually identical images with different metadata, compression, or format
 - **Hash cache** — SQLite-backed; unchanged files aren't rehashed between runs
 - **File type categories** — scan Images, Videos, Documents, Audio, or all files
 - **Three duplicate modes** — move to trash, move to folder, or review first
@@ -64,7 +65,7 @@ cd src-tauri
 cargo test
 ```
 
-41 tests: unit tests for hashing, caching, file operations, and sidecar detection, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
+59 tests: unit tests for hashing, caching, perceptual hashing, and file operations, plus integration tests covering the full scan pipeline, cache behavior, file moves with sidecars, collision handling, category filtering, and CSV export.
 
 ## Usage
 
@@ -77,6 +78,13 @@ Pick your **reference** folder (existing library — never modified) and **eval*
 **File types** — select which categories to include: Images (default), Videos, Documents, Audio, or All Files.
 
 **Hash algorithm** — SHA-256 (default, cryptographic) or xxHash (faster, non-cryptographic). Switching algorithms triggers a full re-hash since cached hashes are algorithm-specific.
+
+**Perceptual matching** — enable to find visually similar images that aren't byte-identical (e.g., same photo with different metadata, recompression, or format). Choose a sensitivity preset:
+- **Strict** — metadata changes, recompression
+- **Moderate** — quality differences, minor crops
+- **Loose** — significant changes (review matches carefully)
+
+Supported formats: JPEG, PNG, TIFF, BMP, WebP. Requires an image category to be selected.
 
 **Duplicate handling:**
 - **Move to trash** — sends duplicates to macOS Trash (recoverable)
@@ -91,9 +99,14 @@ The app walks both directories, hashes all matching files (using cached hashes w
 
 ### 4. Results
 
-A summary shows total files scanned, duplicates found, and unique files. The file list shows each eval file with its status. From here you can:
+Results are grouped into three categories:
+- **Exact** (red) — byte-identical content hash matches
+- **Similar** (amber) — perceptual matches with a similarity percentage (only when perceptual matching is enabled)
+- **Unique** (green) — no match found
 
-- Execute the chosen action (trash or move duplicates)
+Use the selection buttons (Select All, Select Exact, Select Similar) to choose which files to act on. From here you can:
+
+- Execute the chosen action (trash or move selected files)
 - Export results as CSV or JSON
 - Go back and start a new scan
 
@@ -120,9 +133,17 @@ The cache is pruned on each run — entries for deleted files are removed automa
 
 ### Duplicate detection
 
+**Content hashing (exact matches):**
 1. Hash all reference files → build a set of known hashes
 2. Hash all eval files → compare each against the reference set
 3. Detect intra-eval duplicates — if the eval folder itself contains identical files, only the first (by path sort order) is kept as "unique"
+
+**Perceptual matching (similar matches):**
+4. If enabled, compute a 64-bit dHash (difference hash) for all reference images and non-exact eval images
+5. Compare each eval dHash against all reference dHashes using Hamming distance
+6. Flag files below the sensitivity threshold as "similar"
+
+dHash works by resizing the image to 9x8 grayscale and comparing each pixel to its right neighbor, producing a compact fingerprint that's invariant to metadata, compression, and minor visual changes. Perceptual hashes are cached alongside content hashes.
 
 Eval results are sorted by path before comparison, so duplicate detection is deterministic regardless of cache state.
 
@@ -164,10 +185,11 @@ src/                        # React + TypeScript frontend
 src-tauri/                  # Rust backend
   src/
     hasher.rs               # File collection, SHA-256/xxHash, parallel hashing
+    perceptual.rs           # dHash computation and Hamming distance
     cache.rs                # SQLite hash cache with algorithm-aware keys
     fileops.rs              # Trash, move, sidecar handling, dir cleanup
     commands.rs             # Tauri commands: scan_folders, execute_action, export_report
-    tests.rs                # 41 unit + integration tests
+    tests.rs                # 59 unit + integration tests
     lib.rs                  # Plugin registration and command handler
     main.rs                 # Binary entry point
   tauri.conf.json           # App config (window size, permissions, build)
@@ -183,7 +205,7 @@ src-tauri/                  # Rust backend
 | Backend language | Rust |
 | Frontend | React 19 + TypeScript |
 | Build tool | Vite |
-| Hashing | `sha2` (SHA-256), `xxhash-rust` (xxh3) |
+| Hashing | `sha2` (SHA-256), `xxhash-rust` (xxh3), `image` (perceptual dHash) |
 | Parallelism | `rayon` |
 | Cache | `rusqlite` (SQLite, bundled) |
 | File traversal | `walkdir` |
