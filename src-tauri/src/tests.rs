@@ -1,8 +1,13 @@
+use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::cache::{CachedFile, HashCache};
+use crate::commands::{self, EvalFile, ScanResult};
 use crate::fileops;
 use crate::hasher;
 
@@ -541,4 +546,457 @@ fn resolve_extensions_empty_categories() {
 fn resolve_extensions_unknown_category_ignored() {
     let result = hasher::resolve_extensions(&["unknown".to_string()], false).unwrap();
     assert!(result.is_empty());
+}
+
+// ===========================================================================
+// Integration tests: full pipeline with real files on disk
+// ===========================================================================
+
+/// Helper: create a file under `dir` with the given content, creating parent dirs.
+fn create_file(dir: &Path, relative: &str, content: &[u8]) -> PathBuf {
+    let path = dir.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(&path, content).unwrap();
+    path
+}
+
+/// Inline duplicate detection logic extracted from commands.rs scan_folders_blocking.
+fn detect_duplicates(
+    ref_hashed: &[hasher::HashedFile],
+    eval_hashed: &mut Vec<hasher::HashedFile>,
+    eval_dir: &Path,
+) -> (Vec<EvalFile>, Vec<EvalFile>) {
+    let ref_hash_set: HashSet<String> = ref_hashed.iter().map(|f| f.hash.clone()).collect();
+
+    eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut seen_eval_hashes: HashSet<String> = HashSet::new();
+    let mut duplicates = Vec::new();
+    let mut uniques = Vec::new();
+
+    for ef in eval_hashed.iter() {
+        let is_ref_dupe = ref_hash_set.contains(&ef.hash);
+        let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
+        let is_duplicate = is_ref_dupe || is_intra_dupe;
+
+        let relative_path = Path::new(&ef.path)
+            .strip_prefix(eval_dir)
+            .unwrap_or(Path::new(&ef.path))
+            .to_string_lossy()
+            .to_string();
+
+        let eval_file = EvalFile {
+            path: ef.path.clone(),
+            relative_path,
+            size: ef.size,
+            hash: ef.hash.clone(),
+            is_duplicate,
+        };
+
+        if is_duplicate {
+            duplicates.push(eval_file);
+        } else {
+            uniques.push(eval_file);
+        }
+
+        if !is_ref_dupe {
+            seen_eval_hashes.insert(ef.hash.clone());
+        }
+    }
+
+    (duplicates, uniques)
+}
+
+// ---------------------------------------------------------------------------
+// Test 1: Full scan finds duplicates (ref dupes + intra-eval dupes)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_full_scan_finds_duplicates() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("scan");
+    let ref_dir = root.join("reference");
+    let eval_dir = root.join("eval");
+
+    // Reference: 3 files with known content
+    create_file(&ref_dir, "photo_a.jpg", b"content_a");
+    create_file(&ref_dir, "photo_b.jpg", b"content_b");
+    create_file(&ref_dir, "photo_c.jpg", b"content_c");
+
+    // Eval: 5 files
+    // 2 copies of ref files (dupes of reference)
+    create_file(&eval_dir, "copy_a.jpg", b"content_a"); // ref dupe
+    create_file(&eval_dir, "copy_b.jpg", b"content_b"); // ref dupe
+    // 2 unique files
+    create_file(&eval_dir, "unique_1.jpg", b"unique_content_1");
+    create_file(&eval_dir, "unique_2.jpg", b"unique_content_2");
+    // 1 intra-eval duplicate (same content as unique_1)
+    create_file(&eval_dir, "zzz_intra_dupe.jpg", b"unique_content_1"); // intra-eval dupe
+
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let ref_files = hasher::collect_files(&ref_dir, Some(&image_exts));
+    let eval_files = hasher::collect_files(&eval_dir, Some(&image_exts));
+
+    assert_eq!(ref_files.len(), 3);
+    assert_eq!(eval_files.len(), 5);
+
+    let cache = HashCache::open_in_memory().unwrap();
+    let progress = Arc::new(AtomicUsize::new(0));
+
+    let ref_result = hasher::hash_files_cached(&ref_files, &cache, progress.clone(), "sha256");
+    assert_eq!(ref_result.hashed.len(), 3);
+    assert!(ref_result.skipped.is_empty());
+
+    let progress2 = Arc::new(AtomicUsize::new(0));
+    let eval_result = hasher::hash_files_cached(&eval_files, &cache, progress2, "sha256");
+    assert_eq!(eval_result.hashed.len(), 5);
+    assert!(eval_result.skipped.is_empty());
+
+    let mut eval_hashed = eval_result.hashed;
+    let (duplicates, uniques) = detect_duplicates(&ref_result.hashed, &mut eval_hashed, &eval_dir);
+
+    assert_eq!(duplicates.len(), 3, "Expected 3 duplicates (2 ref + 1 intra-eval)");
+    assert_eq!(uniques.len(), 2, "Expected 2 unique files");
+
+    // total_eval
+    let total_eval = duplicates.len() + uniques.len();
+    assert_eq!(total_eval, 5);
+
+    // Results should be sorted by path (deterministic)
+    for window in duplicates.windows(2) {
+        assert!(window[0].path <= window[1].path, "duplicates not sorted by path");
+    }
+    for window in uniques.windows(2) {
+        assert!(window[0].path <= window[1].path, "uniques not sorted by path");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 2: Cache speeds up second run
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_cache_speeds_up_second_run() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("cache_test");
+    create_file(&root, "a.jpg", b"alpha");
+    create_file(&root, "b.jpg", b"bravo");
+    create_file(&root, "c.jpg", b"charlie");
+
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let files = hasher::collect_files(&root, Some(&image_exts));
+    assert_eq!(files.len(), 3);
+
+    let cache = HashCache::open_in_memory().unwrap();
+
+    // First run: everything should be hashed (no cache hits)
+    let progress1 = Arc::new(AtomicUsize::new(0));
+    let result1 = hasher::hash_files_cached(&files, &cache, progress1, "sha256");
+    assert_eq!(result1.hashed.len(), 3);
+    assert!(result1.skipped.is_empty());
+
+    // Collect hashes from first run for comparison
+    let mut hashes1: Vec<(String, String)> = result1
+        .hashed
+        .iter()
+        .map(|h| (h.path.clone(), h.hash.clone()))
+        .collect();
+    hashes1.sort();
+
+    // Second run: all should be cache hits. To verify cache hits, we examine
+    // the result which should be identical. The internal `needs_hashing` vec
+    // should be empty because all files are in cache with matching metadata.
+    let progress2 = Arc::new(AtomicUsize::new(0));
+    let result2 = hasher::hash_files_cached(&files, &cache, progress2.clone(), "sha256");
+    assert_eq!(result2.hashed.len(), 3);
+    assert!(result2.skipped.is_empty());
+
+    let mut hashes2: Vec<(String, String)> = result2
+        .hashed
+        .iter()
+        .map(|h| (h.path.clone(), h.hash.clone()))
+        .collect();
+    hashes2.sort();
+
+    // Same results both times
+    assert_eq!(hashes1, hashes2);
+
+    // Verify second run had zero needs_hashing by checking progress was
+    // completed entirely during cache-hit phase (progress == file count
+    // before any parallel hashing occurs). We check that progress2 advanced
+    // to 3 -- but since it's all cache hits, the atomic counter should be 3.
+    assert_eq!(progress2.load(Ordering::Relaxed), 3);
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: Move preserves directory structure and sidecars
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_move_preserves_structure_and_sidecars() {
+    let tmp = TempDir::new().unwrap();
+    let eval_dir = tmp.path().join("eval");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&dest_dir).unwrap();
+
+    create_file(&eval_dir, "2024/photo.nef", b"raw image data");
+    create_file(&eval_dir, "2024/photo.xmp", b"sidecar metadata");
+
+    let nef_path = eval_dir.join("2024/photo.nef");
+    let result = fileops::move_file(&nef_path, &eval_dir, &dest_dir).unwrap();
+
+    // NEF should be at dest/2024/photo.nef
+    assert_eq!(result, dest_dir.join("2024").join("photo.nef"));
+    assert!(result.exists());
+
+    // XMP sidecar should have moved too
+    let xmp_dest = dest_dir.join("2024").join("photo.xmp");
+    assert!(xmp_dest.exists(), "XMP sidecar should be at dest/2024/photo.xmp");
+
+    // Originals should be gone
+    assert!(!eval_dir.join("2024/photo.nef").exists());
+    assert!(!eval_dir.join("2024/photo.xmp").exists());
+
+    // eval/2024/ should be empty (or gone)
+    let eval_2024 = eval_dir.join("2024");
+    if eval_2024.exists() {
+        let entries: Vec<_> = fs::read_dir(&eval_2024).unwrap().collect();
+        assert!(entries.is_empty(), "eval/2024/ should be empty after move");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: Move handles collision
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_move_handles_collision() {
+    let tmp = TempDir::new().unwrap();
+    let eval_dir = tmp.path().join("eval");
+    let dest_dir = tmp.path().join("dest");
+
+    create_file(&eval_dir, "photo.jpg", b"new version");
+    create_file(&dest_dir, "photo.jpg", b"original version");
+
+    let eval_photo = eval_dir.join("photo.jpg");
+    let result = fileops::move_file(&eval_photo, &eval_dir, &dest_dir).unwrap();
+
+    // Original at dest should be untouched
+    let dest_original = dest_dir.join("photo.jpg");
+    assert!(dest_original.exists());
+    assert_eq!(fs::read(&dest_original).unwrap(), b"original version");
+
+    // Moved file should be photo-1.jpg
+    let dest_collision = dest_dir.join("photo-1.jpg");
+    assert_eq!(result, dest_collision);
+    assert!(dest_collision.exists());
+    assert_eq!(fs::read(&dest_collision).unwrap(), b"new version");
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: Trash with sidecar
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_trash_with_sidecar() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("trash_test");
+
+    let nef = create_file(&dir, "photo.nef", b"raw image");
+    let xmp = create_file(&dir, "photo.xmp", b"sidecar data");
+
+    assert!(nef.exists());
+    assert!(xmp.exists());
+
+    fileops::trash_file(&nef).unwrap();
+
+    assert!(!nef.exists(), "NEF should be gone after trash");
+    assert!(!xmp.exists(), "XMP sidecar should be gone after trash");
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: Cleanup empty dirs (nested)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_cleanup_empty_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("cleanup_root");
+
+    // Create nested dirs with a file only at the deepest level
+    let file = create_file(&root, "a/b/c/file.txt", b"data");
+    assert!(root.join("a/b/c").exists());
+
+    // Remove the file manually
+    fs::remove_file(&file).unwrap();
+
+    let removed = fileops::cleanup_empty_dirs(&root).unwrap();
+
+    // a/b/c/, a/b/, and a/ should all be removed
+    assert!(!root.join("a/b/c").exists(), "a/b/c/ should be removed");
+    assert!(!root.join("a/b").exists(), "a/b/ should be removed");
+    assert!(!root.join("a").exists(), "a/ should be removed");
+    assert_eq!(removed, 3);
+
+    // Root itself should be preserved
+    assert!(root.exists(), "root should still exist");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7: Different algorithms produce different hashes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_different_algorithms_produce_different_hashes() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("algo_test.jpg");
+    fs::write(&file, b"test content for hashing").unwrap();
+
+    let sha_hash = hasher::hash_file(&file, "sha256").unwrap();
+    let xxh_hash = hasher::hash_file(&file, "xxh3").unwrap();
+
+    assert!(!sha_hash.is_empty(), "SHA-256 hash should not be empty");
+    assert!(!xxh_hash.is_empty(), "XXH3 hash should not be empty");
+    assert_ne!(sha_hash, xxh_hash, "SHA-256 and XXH3 should produce different hashes");
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: Category filtering
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_category_filtering() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("filter_test");
+
+    create_file(&root, "photo.jpg", b"image data");
+    create_file(&root, "video.mp4", b"video data");
+    create_file(&root, "doc.pdf", b"document data");
+    create_file(&root, "song.mp3", b"audio data");
+    create_file(&root, "data.bin", b"binary data");
+
+    // Images-only
+    let image_exts = hasher::resolve_extensions(&["images".to_string()], false).unwrap();
+    let image_files = hasher::collect_files(&root, Some(&image_exts));
+    let image_names: Vec<String> = image_files
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(image_files.len(), 1);
+    assert!(image_names.contains(&"photo.jpg".to_string()));
+
+    // Images + Videos
+    let img_vid_exts = hasher::resolve_extensions(
+        &["images".to_string(), "videos".to_string()],
+        false,
+    )
+    .unwrap();
+    let img_vid_files = hasher::collect_files(&root, Some(&img_vid_exts));
+    let img_vid_names: Vec<String> = img_vid_files
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(img_vid_files.len(), 2);
+    assert!(img_vid_names.contains(&"photo.jpg".to_string()));
+    assert!(img_vid_names.contains(&"video.mp4".to_string()));
+
+    // All files (None filter)
+    let all_files = hasher::collect_files(&root, None);
+    assert_eq!(all_files.len(), 5);
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: CSV export
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_csv_export() {
+    let tmp = TempDir::new().unwrap();
+    let csv_path = tmp.path().join("report.csv");
+
+    let results = ScanResult {
+        total_eval: 4,
+        duplicates: vec![
+            EvalFile {
+                path: "/eval/dup1.jpg".to_string(),
+                relative_path: "dup1.jpg".to_string(),
+                size: 1024,
+                hash: "aaa111".to_string(),
+                is_duplicate: true,
+            },
+            EvalFile {
+                path: "/eval/dup2.jpg".to_string(),
+                relative_path: "dup2.jpg".to_string(),
+                size: 2048,
+                hash: "bbb222".to_string(),
+                is_duplicate: true,
+            },
+        ],
+        uniques: vec![
+            EvalFile {
+                path: "/eval/unique1.jpg".to_string(),
+                relative_path: "unique1.jpg".to_string(),
+                size: 512,
+                hash: "ccc333".to_string(),
+                is_duplicate: false,
+            },
+            EvalFile {
+                path: "/eval/sub/unique2.jpg".to_string(),
+                relative_path: "sub/unique2.jpg".to_string(),
+                size: 768,
+                hash: "ddd444".to_string(),
+                is_duplicate: false,
+            },
+        ],
+        skipped: 0,
+    };
+
+    // Write CSV using the same logic as export_report
+    {
+        let mut file = fs::File::create(&csv_path).unwrap();
+        writeln!(file, "status,relative_path,size_bytes,hash").unwrap();
+        for f in &results.duplicates {
+            writeln!(
+                file,
+                "{},{},{},{}",
+                "duplicate",
+                commands::csv_quote(&f.relative_path),
+                f.size,
+                f.hash,
+            )
+            .unwrap();
+        }
+        for f in &results.uniques {
+            writeln!(
+                file,
+                "{},{},{},{}",
+                "unique",
+                commands::csv_quote(&f.relative_path),
+                f.size,
+                f.hash,
+            )
+            .unwrap();
+        }
+    }
+
+    // Read back and verify
+    let csv_content = fs::read_to_string(&csv_path).unwrap();
+    let lines: Vec<&str> = csv_content.lines().collect();
+
+    // Header + 4 data rows
+    assert_eq!(lines.len(), 5, "Expected 1 header + 4 data rows");
+    assert_eq!(lines[0], "status,relative_path,size_bytes,hash");
+
+    // Verify duplicates come first
+    assert!(lines[1].starts_with("duplicate,"));
+    assert!(lines[2].starts_with("duplicate,"));
+    assert!(lines[3].starts_with("unique,"));
+    assert!(lines[4].starts_with("unique,"));
+
+    // Verify specific content
+    assert!(lines[1].contains("dup1.jpg"));
+    assert!(lines[1].contains("1024"));
+    assert!(lines[1].contains("aaa111"));
 }

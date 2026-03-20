@@ -261,7 +261,7 @@ pub async fn execute_action(
     })
 }
 
-fn csv_quote(field: &str) -> String {
+pub(crate) fn csv_quote(field: &str) -> String {
     if field.contains(',') || field.contains('"') || field.contains('\n') {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {
