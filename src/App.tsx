@@ -30,7 +30,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>deDuped</h1>
-        <span className="subtitle">One-way photo deduplication</span>
+        <span className="subtitle">One-way file deduplication</span>
       </header>
       <main className="app-main">
         {screen === "setup" && (

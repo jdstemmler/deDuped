@@ -229,28 +229,6 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
           <div className="category-warning">Select at least one file type to scan</div>
         )}
 
-        <div className="hash-algorithm-row">
-          <span className="hash-label">Hash algorithm</span>
-          <div className="hash-pills">
-            <button
-              className={`hash-pill ${hashAlgorithm === "sha256" ? "active" : ""}`}
-              onClick={() => setHashAlgorithm("sha256")}
-            >
-              SHA-256
-            </button>
-            <button
-              className={`hash-pill ${hashAlgorithm === "xxh3" ? "active" : ""}`}
-              onClick={() => setHashAlgorithm("xxh3")}
-            >
-              xxHash
-            </button>
-          </div>
-          <span className="hash-hint">
-            {hashAlgorithm === "sha256"
-              ? "Cryptographic, slower"
-              : "Fast, non-cryptographic"}
-          </span>
-        </div>
       </div>
 
       <div className="config-section">
@@ -295,7 +273,29 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             </div>
           </label>
         </div>
-        <div className="dest-picker-row">
+        <div className="options-row">
+          <div className="hash-algorithm-row">
+            <span className="hash-label">Hash algorithm</span>
+            <div className="hash-pills">
+              <button
+                className={`hash-pill ${hashAlgorithm === "sha256" ? "active" : ""}`}
+                onClick={() => setHashAlgorithm("sha256")}
+              >
+                SHA-256
+              </button>
+              <button
+                className={`hash-pill ${hashAlgorithm === "xxh3" ? "active" : ""}`}
+                onClick={() => setHashAlgorithm("xxh3")}
+              >
+                xxHash
+              </button>
+            </div>
+            <span className="hash-hint">
+              {hashAlgorithm === "sha256"
+                ? "Cryptographic, slower"
+                : "Fast, non-cryptographic"}
+            </span>
+          </div>
           <div className="dest-picker-slot">
             {dupeMode === "move" && (
               <div className="inline-picker">
