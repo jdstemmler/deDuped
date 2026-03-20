@@ -88,22 +88,30 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
   const dragOverRef = useRef<"reference" | "eval" | null>(null);
 
   useEffect(() => {
-    const unlisten = listen<DragDropPayload>("tauri://drag-drop", (event) => {
-      const paths = event.payload.paths;
-      if (paths.length > 0 && dragOverRef.current) {
-        const droppedPath = paths[0];
-        if (dragOverRef.current === "reference") {
-          setReferenceDir(droppedPath);
-        } else {
-          setEvalDir(droppedPath);
-        }
+    let unlistenFn: (() => void) | undefined;
+
+    (async () => {
+      try {
+        unlistenFn = await listen<DragDropPayload>("tauri://drag-drop", (event) => {
+          const paths = event.payload.paths;
+          if (paths.length > 0 && dragOverRef.current) {
+            const droppedPath = paths[0];
+            if (dragOverRef.current === "reference") {
+              setReferenceDir(droppedPath);
+            } else {
+              setEvalDir(droppedPath);
+            }
+          }
+          dragOverRef.current = null;
+          setDragOver(null);
+        });
+      } catch {
+        // Tauri drag-drop listener unavailable (e.g. plain browser / Playwright)
       }
-      dragOverRef.current = null;
-      setDragOver(null);
-    });
+    })();
 
     return () => {
-      unlisten.then((fn) => fn());
+      if (unlistenFn) unlistenFn();
     };
   }, []);
 
@@ -149,11 +157,13 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
     });
   };
 
+  const showCategoryWarning = !allFiles && selectedCategories.size === 0;
+
   return (
     <div className="setup">
       <div className="folder-pickers">
         <div
-          className={`folder-picker ${referenceDir ? "selected" : ""} ${dragOver === "reference" ? "drag-over" : ""}`}
+          className={`folder-picker ${referenceDir ? "selected reference-selected" : ""} ${dragOver === "reference" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setReferenceDir)}
           onDragEnter={(e) => { e.preventDefault(); dragOverRef.current = "reference"; setDragOver("reference"); }}
           onDragOver={(e) => e.preventDefault()}
@@ -169,7 +179,7 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
         </div>
 
         <div
-          className={`folder-picker ${evalDir ? "selected" : ""} ${dragOver === "eval" ? "drag-over" : ""}`}
+          className={`folder-picker ${evalDir ? "selected eval-selected" : ""} ${dragOver === "eval" ? "drag-over" : ""}`}
           onClick={() => pickFolder(setEvalDir)}
           onDragEnter={(e) => { e.preventDefault(); dragOverRef.current = "eval"; setDragOver("eval"); }}
           onDragOver={(e) => e.preventDefault()}
@@ -215,6 +225,9 @@ export default function SetupScreen({ onStart, initialConfig }: Props) {
             All Files
           </button>
         </div>
+        {showCategoryWarning && (
+          <div className="category-warning">Select at least one file type to scan</div>
+        )}
 
         <div className="hash-algorithm-row">
           <span className="hash-label">Hash algorithm</span>

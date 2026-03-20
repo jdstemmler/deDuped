@@ -8,32 +8,36 @@
 }
 
 :root {
-  --text-primary: #1a1a1a;
-  --text-secondary: #6b7280;
-  --border: #e5e7eb;
-  --bg: #ffffff;
-  --bg-hover: #f9fafb;
+  --bg-primary: #0f1115;
+  --bg-secondary: #1a1d23;
+  --bg-tertiary: #252830;
+  --bg-elevated: #2a2d36;
 
-  --green-bg: #e1f5ee;
-  --green-text: #085041;
-  --green-dot: #1d9e75;
+  --text-primary: #e8e9ed;
+  --text-secondary: #8b8d96;
+  --text-tertiary: #5c5e66;
 
-  --blue-bg: #e6f1fb;
-  --blue-text: #0c447c;
+  --border: #2e3038;
+  --border-hover: #454750;
 
-  --red-bg: #fcebeb;
-  --red-text: #791f1f;
-  --red-dot: #e24b4a;
-  --red-btn: #a32d2d;
+  --accent-green: #1d9e75;
+  --accent-green-dim: rgba(29, 158, 117, 0.15);
+  --accent-red: #e24b4a;
+  --accent-red-dim: rgba(226, 75, 74, 0.15);
+  --accent-blue: #4a90d9;
+  --accent-blue-dim: rgba(74, 144, 217, 0.15);
+  --accent-amber: #d97706;
 
-  --btn-primary: #1a1a1a;
-  --btn-primary-text: #ffffff;
+  --btn-primary-bg: #e8e9ed;
+  --btn-primary-text: #0f1115;
+  --btn-danger-bg: #a32d2d;
+  --btn-danger-text: #fff;
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--text-primary);
-  background: var(--bg);
+  background: var(--bg-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -42,7 +46,7 @@ body {
 .app {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 32px 40px;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -52,9 +56,9 @@ body {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 24px;
-  padding-bottom: 12px;
-  border-bottom: 0.5px solid var(--border);
+  margin-bottom: 28px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -66,8 +70,9 @@ body {
 }
 
 .app-header h1 {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 .subtitle {
@@ -84,35 +89,38 @@ body {
 }
 
 .folder-picker {
+  background: var(--bg-secondary);
   border: 2px dashed var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 20px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .folder-picker:hover {
-  border-color: #aaa;
-  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  background: var(--bg-tertiary);
 }
 
 .folder-picker.selected {
   border-style: solid;
 }
 
+.folder-picker.selected.reference-selected {
+  border-color: var(--accent-green);
+}
+
+.folder-picker.selected.eval-selected {
+  border-color: var(--accent-blue);
+}
+
 .folder-picker.drag-over {
-  border-color: var(--green-dot);
+  border-color: var(--accent-green);
   border-style: dashed;
-  background: rgba(29, 158, 117, 0.06);
-}
-
-.folder-picker.selected .badge-protected {
-  background: var(--green-bg);
-}
-
-.folder-picker.selected .badge-eval {
-  background: var(--blue-bg);
+  background: var(--accent-green-dim);
+  box-shadow: 0 0 16px rgba(29, 158, 117, 0.25);
 }
 
 .picker-label {
@@ -127,11 +135,14 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* monospace paths slightly brighter */
+  color: var(--text-secondary);
+  filter: brightness(1.15);
 }
 
 .picker-hint {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 /* ── Badges ──────────────────────────────────────────── */
@@ -140,19 +151,19 @@ body {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .badge-protected {
-  background: var(--green-bg);
-  color: var(--green-text);
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
 }
 
 .badge-eval {
-  background: var(--blue-bg);
-  color: var(--blue-text);
+  background: var(--accent-blue-dim);
+  color: var(--accent-blue);
 }
 
 /* ── Config Sections ─────────────────────────────────── */
@@ -161,9 +172,12 @@ body {
 }
 
 .config-section h3 {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   margin-bottom: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
 }
 
 /* ── Category Pills ──────────────────────────────────── */
@@ -174,26 +188,36 @@ body {
 }
 
 .category-pill {
-  background: transparent;
+  background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 6px 16px;
-  font-size: 13px;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   color: var(--text-primary);
-  transition: all 0.15s;
+  transition: all 0.15s ease;
+  flex: 1 1 0;
+  min-width: 100px;
+  text-align: center;
 }
 
 .category-pill:hover {
-  border-color: #aaa;
-  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  background: var(--bg-elevated);
 }
 
 .category-pill.active {
-  background: #1a1a1a;
-  color: #ffffff;
-  border-color: #1a1a1a;
+  background: var(--accent-green);
+  color: #fff;
+  border-color: var(--accent-green);
+}
+
+/* ── Category Warning ────────────────────────────────── */
+.category-warning {
+  font-size: 12px;
+  color: var(--accent-amber);
+  margin-top: 8px;
 }
 
 /* ── Hash Algorithm Selector ────────────────────────── */
@@ -216,31 +240,31 @@ body {
 }
 
 .hash-pill {
-  background: transparent;
+  background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 12px;
+  border-radius: 6px;
+  padding: 4px 14px;
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   color: var(--text-primary);
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .hash-pill:hover {
-  border-color: #aaa;
-  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  background: var(--bg-elevated);
 }
 
 .hash-pill.active {
-  background: #1a1a1a;
-  color: #ffffff;
-  border-color: #1a1a1a;
+  background: var(--accent-green);
+  color: #fff;
+  border-color: var(--accent-green);
 }
 
 .hash-hint {
   font-size: 11px;
-  color: var(--text-tertiary, #888);
+  color: var(--text-tertiary);
 }
 
 /* ── Radio Group ─────────────────────────────────────── */
@@ -260,25 +284,28 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  border: 0.5px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 10px 14px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .radio-card:hover {
-  background: var(--bg-hover);
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .radio-card.active {
-  background: var(--bg-hover);
-  border-color: #aaa;
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .radio-card input[type="radio"] {
   margin-top: 3px;
-  accent-color: var(--btn-primary);
+  accent-color: var(--accent-green);
 }
 
 .radio-card strong {
@@ -358,9 +385,10 @@ body {
   position: absolute;
   cursor: pointer;
   inset: 0;
-  background: #ccc;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
   border-radius: 24px;
-  transition: 0.2s;
+  transition: all 0.2s ease;
 }
 
 .toggle-slider::before {
@@ -368,19 +396,21 @@ body {
   position: absolute;
   height: 18px;
   width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: white;
+  left: 2px;
+  bottom: 2px;
+  background: var(--text-secondary);
   border-radius: 50%;
-  transition: 0.2s;
+  transition: all 0.2s ease;
 }
 
 .toggle input:checked + .toggle-slider {
-  background: var(--green-dot);
+  background: var(--accent-green);
+  border-color: var(--accent-green);
 }
 
 .toggle input:checked + .toggle-slider::before {
   transform: translateX(20px);
+  background: #fff;
 }
 
 /* ── Inline Picker ───────────────────────────────────── */
@@ -395,10 +425,11 @@ body {
   font-family: "SF Mono", "Fira Code", monospace;
   font-size: 12px;
   color: var(--text-secondary);
-  background: var(--bg-hover);
+  filter: brightness(1.15);
+  background: var(--bg-tertiary);
   padding: 6px 10px;
-  border-radius: 4px;
-  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  border: 1px solid var(--border);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -408,7 +439,7 @@ body {
 
 /* ── Buttons ─────────────────────────────────────────── */
 .btn-primary {
-  background: var(--btn-primary);
+  background: var(--btn-primary-bg);
   color: var(--btn-primary-text);
   border: none;
   border-radius: 8px;
@@ -416,7 +447,7 @@ body {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: all 0.15s ease;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -424,40 +455,46 @@ body {
 }
 
 .btn-primary:disabled {
-  opacity: 0.4;
+  opacity: 0.25;
   cursor: not-allowed;
 }
 
 .btn-danger {
-  background: var(--red-btn);
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-text);
 }
 
 .btn-secondary {
   background: transparent;
   color: var(--text-primary);
-  border: 0.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 24px;
   font-size: 14px;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .btn-secondary:hover {
-  background: var(--bg-hover);
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .btn-small {
-  background: var(--bg);
-  border: 0.5px solid var(--border);
-  border-radius: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   padding: 4px 12px;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  color: var(--text-primary);
+  transition: all 0.15s ease;
 }
 
 .btn-small:hover {
-  background: var(--bg-hover);
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .btn-link {
@@ -468,6 +505,7 @@ body {
   cursor: pointer;
   padding: 8px 0;
   margin-top: 8px;
+  transition: all 0.15s ease;
 }
 
 .btn-link:hover {
@@ -494,22 +532,24 @@ body {
 .scan-phase {
   font-size: 16px;
   font-weight: 500;
+  color: var(--text-primary);
 }
 
 .progress-bar {
   width: 100%;
   max-width: 500px;
   height: 8px;
-  background: var(--bg-hover);
+  background: var(--bg-tertiary);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--btn-primary);
+  background: var(--accent-green);
   border-radius: 4px;
   transition: width 0.2s ease;
+  box-shadow: 0 0 8px rgba(29, 158, 117, 0.4);
 }
 
 .scan-stats {
@@ -527,6 +567,7 @@ body {
 .scan-count {
   font-family: "SF Mono", "Fira Code", monospace;
   font-size: 13px;
+  filter: brightness(1.15);
 }
 
 /* ── Results Screen ──────────────────────────────────── */
@@ -561,16 +602,18 @@ body {
 .summary-bar {
   display: flex;
   gap: 0;
-  border: 0.5px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .stat {
   flex: 1;
   padding: 10px 8px;
   text-align: center;
-  border-right: 0.5px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
 .stat:last-child {
@@ -586,29 +629,31 @@ body {
 .stat-label {
   display: block;
   font-size: 10px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .stat-danger .stat-value {
-  color: var(--red-dot);
+  color: var(--accent-red);
 }
 
 .stat-success .stat-value {
-  color: var(--green-dot);
+  color: var(--accent-green);
 }
 
 .stat-warning .stat-value {
-  color: #d97706;
+  color: var(--accent-amber);
 }
 
 /* ── File List ───────────────────────────────────────── */
 .file-list {
   flex: 1;
   overflow-y: auto;
-  border: 0.5px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .file-row {
@@ -616,12 +661,17 @@ body {
   align-items: center;
   gap: 10px;
   padding: 8px 16px;
-  border-bottom: 0.5px solid var(--border);
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
+  transition: background 0.15s ease;
 }
 
 .file-row:last-child {
   border-bottom: none;
+}
+
+.file-row:hover {
+  background: var(--bg-tertiary);
 }
 
 .status-dot {
@@ -632,11 +682,11 @@ body {
 }
 
 .dot-dupe {
-  background: var(--red-dot);
+  background: var(--accent-red);
 }
 
 .dot-unique {
-  background: var(--green-dot);
+  background: var(--accent-green);
 }
 
 .file-path {
@@ -646,6 +696,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  filter: brightness(1.15);
 }
 
 .file-size {
@@ -658,18 +709,18 @@ body {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   white-space: nowrap;
 }
 
 .tag-dupe {
-  background: var(--red-bg);
-  color: var(--red-text);
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
 }
 
 .tag-unique {
-  background: var(--green-bg);
-  color: var(--green-text);
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
 }
 
 /* ── Compact Radio (sidebar) ─────────────────────────── */
@@ -677,25 +728,27 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 0.5px solid var(--border);
-  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   padding: 8px 12px;
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.15s;
+  transition: all 0.15s ease;
 }
 
 .radio-card-compact:hover {
-  background: var(--bg-hover);
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .radio-card-compact.active {
-  background: var(--bg-hover);
-  border-color: #aaa;
+  background: var(--bg-tertiary);
+  border-color: var(--border-hover);
 }
 
 .radio-card-compact input[type="radio"] {
-  accent-color: var(--btn-primary);
+  accent-color: var(--accent-green);
 }
 
 /* ── Export Buttons ──────────────────────────────────── */
@@ -711,15 +764,20 @@ body {
 
 /* ── Action Panel ────────────────────────────────────── */
 .action-panel {
-  border: 0.5px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .action-panel h3 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   margin-bottom: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
 }
 
 .action-buttons {
@@ -765,7 +823,23 @@ body {
 
 .error-item {
   font-size: 12px;
-  color: var(--red-text);
+  color: var(--accent-red);
   padding: 4px 0;
   font-family: "SF Mono", "Fira Code", monospace;
+}
+
+/* ── Scan Error ──────────────────────────────────────── */
+.scan-error {
+  text-align: center;
+}
+
+.scan-error h2 {
+  margin-bottom: 8px;
+}
+
+.scan-error .error-message {
+  color: var(--accent-red);
+  margin-bottom: 16px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 13px;
 }
