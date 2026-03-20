@@ -574,13 +574,13 @@ fn detect_duplicates(
     eval_hashed.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut seen_eval_hashes: HashSet<String> = HashSet::new();
-    let mut duplicates = Vec::new();
+    let mut exact_matches = Vec::new();
     let mut uniques = Vec::new();
 
     for ef in eval_hashed.iter() {
         let is_ref_dupe = ref_hash_set.contains(&ef.hash);
         let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
-        let is_duplicate = is_ref_dupe || is_intra_dupe;
+        let is_exact = is_ref_dupe || is_intra_dupe;
 
         let relative_path = Path::new(&ef.path)
             .strip_prefix(eval_dir)
@@ -593,11 +593,12 @@ fn detect_duplicates(
             relative_path,
             size: ef.size,
             hash: ef.hash.clone(),
-            is_duplicate,
+            match_type: if is_exact { "exact".to_string() } else { "unique".to_string() },
+            hamming_distance: None,
         };
 
-        if is_duplicate {
-            duplicates.push(eval_file);
+        if is_exact {
+            exact_matches.push(eval_file);
         } else {
             uniques.push(eval_file);
         }
@@ -607,7 +608,7 @@ fn detect_duplicates(
         }
     }
 
-    (duplicates, uniques)
+    (exact_matches, uniques)
 }
 
 // ---------------------------------------------------------------------------
@@ -656,18 +657,18 @@ fn integration_full_scan_finds_duplicates() {
     assert!(eval_result.skipped.is_empty());
 
     let mut eval_hashed = eval_result.hashed;
-    let (duplicates, uniques) = detect_duplicates(&ref_result.hashed, &mut eval_hashed, &eval_dir);
+    let (exact_matches, uniques) = detect_duplicates(&ref_result.hashed, &mut eval_hashed, &eval_dir);
 
-    assert_eq!(duplicates.len(), 3, "Expected 3 duplicates (2 ref + 1 intra-eval)");
+    assert_eq!(exact_matches.len(), 3, "Expected 3 duplicates (2 ref + 1 intra-eval)");
     assert_eq!(uniques.len(), 2, "Expected 2 unique files");
 
     // total_eval
-    let total_eval = duplicates.len() + uniques.len();
+    let total_eval = exact_matches.len() + uniques.len();
     assert_eq!(total_eval, 5);
 
     // Results should be sorted by path (deterministic)
-    for window in duplicates.windows(2) {
-        assert!(window[0].path <= window[1].path, "duplicates not sorted by path");
+    for window in exact_matches.windows(2) {
+        assert!(window[0].path <= window[1].path, "exact_matches not sorted by path");
     }
     for window in uniques.windows(2) {
         assert!(window[0].path <= window[1].path, "uniques not sorted by path");
@@ -921,36 +922,41 @@ fn integration_csv_export() {
 
     let results = ScanResult {
         total_eval: 4,
-        duplicates: vec![
+        exact_matches: vec![
             EvalFile {
                 path: "/eval/dup1.jpg".to_string(),
                 relative_path: "dup1.jpg".to_string(),
                 size: 1024,
                 hash: "aaa111".to_string(),
-                is_duplicate: true,
+                match_type: "exact".to_string(),
+                hamming_distance: None,
             },
             EvalFile {
                 path: "/eval/dup2.jpg".to_string(),
                 relative_path: "dup2.jpg".to_string(),
                 size: 2048,
                 hash: "bbb222".to_string(),
-                is_duplicate: true,
+                match_type: "exact".to_string(),
+                hamming_distance: None,
             },
         ],
+        similar_matches: vec![],
         uniques: vec![
             EvalFile {
                 path: "/eval/unique1.jpg".to_string(),
                 relative_path: "unique1.jpg".to_string(),
                 size: 512,
                 hash: "ccc333".to_string(),
-                is_duplicate: false,
+                match_type: "unique".to_string(),
+                hamming_distance: None,
             },
             EvalFile {
                 path: "/eval/sub/unique2.jpg".to_string(),
                 relative_path: "sub/unique2.jpg".to_string(),
                 size: 768,
                 hash: "ddd444".to_string(),
-                is_duplicate: false,
+                match_type: "unique".to_string(),
+                hamming_distance: None,
             },
         ],
         skipped: 0,
@@ -965,32 +971,29 @@ fn integration_csv_export() {
             ref_file_count: 0,
             eval_file_count: 4,
             total_bytes: 0,
+            perceptual_compare_ms: 0,
         },
     };
 
     // Write CSV using the same logic as export_report
     {
         let mut file = fs::File::create(&csv_path).unwrap();
-        writeln!(file, "status,relative_path,size_bytes,hash").unwrap();
-        for f in &results.duplicates {
+        writeln!(file, "status,relative_path,size_bytes,hash,hamming_distance").unwrap();
+        let all_files = results.exact_matches.iter()
+            .chain(results.similar_matches.iter())
+            .chain(results.uniques.iter());
+        for f in all_files {
+            let dist_str = f.hamming_distance
+                .map(|d| d.to_string())
+                .unwrap_or_default();
             writeln!(
                 file,
-                "{},{},{},{}",
-                "duplicate",
+                "{},{},{},{},{}",
+                commands::csv_quote(&f.match_type),
                 commands::csv_quote(&f.relative_path),
                 f.size,
                 f.hash,
-            )
-            .unwrap();
-        }
-        for f in &results.uniques {
-            writeln!(
-                file,
-                "{},{},{},{}",
-                "unique",
-                commands::csv_quote(&f.relative_path),
-                f.size,
-                f.hash,
+                dist_str,
             )
             .unwrap();
         }
@@ -1002,11 +1005,11 @@ fn integration_csv_export() {
 
     // Header + 4 data rows
     assert_eq!(lines.len(), 5, "Expected 1 header + 4 data rows");
-    assert_eq!(lines[0], "status,relative_path,size_bytes,hash");
+    assert_eq!(lines[0], "status,relative_path,size_bytes,hash,hamming_distance");
 
-    // Verify duplicates come first
-    assert!(lines[1].starts_with("duplicate,"));
-    assert!(lines[2].starts_with("duplicate,"));
+    // Verify exact matches come first
+    assert!(lines[1].starts_with("exact,"));
+    assert!(lines[2].starts_with("exact,"));
     assert!(lines[3].starts_with("unique,"));
     assert!(lines[4].starts_with("unique,"));
 

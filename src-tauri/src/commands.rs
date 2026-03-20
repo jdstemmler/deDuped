@@ -16,6 +16,7 @@ use crate::actionlog::{ActionBatch, ActionEntry, ActionLog};
 use crate::cache::HashCache;
 use crate::fileops;
 use crate::hasher;
+use crate::perceptual;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanConfig {
@@ -31,7 +32,13 @@ pub struct ScanConfig {
     pub custom_extensions: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub removed_extensions: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub perceptual_matching: bool,
+    #[serde(default = "default_perceptual_threshold")]
+    pub perceptual_threshold: u32,
 }
+
+fn default_perceptual_threshold() -> u32 { 10 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -53,12 +60,14 @@ pub struct ScanStats {
     pub ref_file_count: usize,
     pub eval_file_count: usize,
     pub total_bytes: u64,
+    pub perceptual_compare_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub total_eval: usize,
-    pub duplicates: Vec<EvalFile>,
+    pub exact_matches: Vec<EvalFile>,
+    pub similar_matches: Vec<EvalFile>,
     pub uniques: Vec<EvalFile>,
     pub skipped: usize,
     pub stats: ScanStats,
@@ -70,7 +79,8 @@ pub struct EvalFile {
     pub relative_path: String,
     pub size: u64,
     pub hash: String,
-    pub is_duplicate: bool,
+    pub match_type: String,
+    pub hamming_distance: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -222,17 +232,17 @@ fn scan_folders_blocking(
     let total_bytes: u64 = ref_result.hashed.iter().map(|f| f.size).sum::<u64>()
         + eval_hashed.iter().map(|f| f.size).sum::<u64>();
 
-    // Detect intra-eval duplicates: track which hashes we've already seen
+    // -- Content comparison --
     emit_progress(app, "Comparing files...", 0, 0);
     let mut seen_eval_hashes: HashSet<String> = HashSet::new();
 
-    let mut duplicates = Vec::new();
-    let mut uniques = Vec::new();
+    let mut exact_matches = Vec::new();
+    let mut non_exact_eval = Vec::new();
 
     for ef in &eval_hashed {
         let is_ref_dupe = ref_hashes.contains(&ef.hash);
         let is_intra_dupe = seen_eval_hashes.contains(&ef.hash);
-        let is_duplicate = is_ref_dupe || is_intra_dupe;
+        let is_exact = is_ref_dupe || is_intra_dupe;
 
         let relative_path = Path::new(&ef.path)
             .strip_prefix(eval_dir)
@@ -245,28 +255,72 @@ fn scan_folders_blocking(
             relative_path,
             size: ef.size,
             hash: ef.hash.clone(),
-            is_duplicate,
+            match_type: if is_exact { "exact".to_string() } else { "unique".to_string() },
+            hamming_distance: None,
         };
 
-        if is_duplicate {
-            duplicates.push(eval_file);
+        if is_exact {
+            exact_matches.push(eval_file);
         } else {
-            uniques.push(eval_file);
+            non_exact_eval.push((eval_file, ef.perceptual_hash));
         }
 
-        // Only track non-ref hashes for intra-eval detection. If a hash matches
-        // reference, every eval copy is a ref-dupe regardless of how many exist.
         if !is_ref_dupe {
             seen_eval_hashes.insert(ef.hash.clone());
         }
+    }
+
+    // -- Perceptual comparison (optional) --
+    let mut similar_matches = Vec::new();
+    let mut perceptual_compare_ms: u64 = 0;
+    let uniques_candidate;
+
+    if config.perceptual_matching {
+        let ref_phashes: Vec<u64> = ref_result.hashed.iter()
+            .filter_map(|f| f.perceptual_hash)
+            .collect();
+
+        if !ref_phashes.is_empty() {
+            let compare_total = non_exact_eval.len();
+            emit_progress(app, "Comparing perceptual hashes...", 0, compare_total);
+            let t0 = Instant::now();
+
+            let mut still_unique = Vec::new();
+            for (i, (mut eval_file, eval_phash)) in non_exact_eval.into_iter().enumerate() {
+                emit_progress(app, "Comparing perceptual hashes...", i + 1, compare_total);
+                if let Some(eval_ph) = eval_phash {
+                    let min_dist = ref_phashes.iter()
+                        .map(|&rph| perceptual::hamming_distance(eval_ph, rph))
+                        .min()
+                        .unwrap_or(u32::MAX);
+
+                    if min_dist <= config.perceptual_threshold {
+                        eval_file.match_type = "similar".to_string();
+                        eval_file.hamming_distance = Some(min_dist);
+                        similar_matches.push(eval_file);
+                    } else {
+                        still_unique.push(eval_file);
+                    }
+                } else {
+                    still_unique.push(eval_file);
+                }
+            }
+            uniques_candidate = still_unique;
+            perceptual_compare_ms = t0.elapsed().as_millis() as u64;
+        } else {
+            uniques_candidate = non_exact_eval.into_iter().map(|(f, _)| f).collect();
+        }
+    } else {
+        uniques_candidate = non_exact_eval.into_iter().map(|(f, _)| f).collect();
     }
 
     let total_ms = scan_start.elapsed().as_millis() as u64;
 
     Ok(ScanResult {
         total_eval: eval_hashed.len(),
-        duplicates,
-        uniques,
+        exact_matches,
+        similar_matches,
+        uniques: uniques_candidate,
         skipped,
         stats: ScanStats {
             ref_collect_ms,
@@ -279,6 +333,7 @@ fn scan_folders_blocking(
             ref_file_count,
             eval_file_count,
             total_bytes,
+            perceptual_compare_ms,
         },
     })
 }
@@ -571,28 +626,25 @@ pub async fn export_report(
             let mut file = fs::File::create(&path)
                 .map_err(|e| format!("Failed to create file: {e}"))?;
 
-            writeln!(file, "status,relative_path,size_bytes,hash")
+            writeln!(file, "status,relative_path,size_bytes,hash,hamming_distance")
                 .map_err(|e| format!("Failed to write header: {e}"))?;
 
-            for f in &results.duplicates {
+            let all_files = results.exact_matches.iter()
+                .chain(results.similar_matches.iter())
+                .chain(results.uniques.iter());
+
+            for f in all_files {
+                let dist_str = f.hamming_distance
+                    .map(|d| d.to_string())
+                    .unwrap_or_default();
                 writeln!(
                     file,
-                    "{},{},{},{}",
-                    "duplicate",
+                    "{},{},{},{},{}",
+                    csv_quote(&f.match_type),
                     csv_quote(&f.relative_path),
                     f.size,
                     f.hash,
-                )
-                .map_err(|e| format!("Failed to write row: {e}"))?;
-            }
-            for f in &results.uniques {
-                writeln!(
-                    file,
-                    "{},{},{},{}",
-                    "unique",
-                    csv_quote(&f.relative_path),
-                    f.size,
-                    f.hash,
+                    dist_str,
                 )
                 .map_err(|e| format!("Failed to write row: {e}"))?;
             }
