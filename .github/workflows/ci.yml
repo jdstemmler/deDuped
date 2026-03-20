@@ -33,6 +33,9 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
+      - name: Frontend build
+        run: npm run build
+
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
@@ -40,6 +43,3 @@ jobs:
       - name: Rust build
         working-directory: src-tauri
         run: cargo build
-
-      - name: Frontend build
-        run: npm run build
